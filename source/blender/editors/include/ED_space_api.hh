@@ -35,6 +35,7 @@ void ED_spacetype_buttons();
 void ED_spacetype_info();
 void ED_spacetype_file();
 void ED_spacetype_action();
+void ED_spacetype_better_timeline();
 void ED_spacetype_nla();
 void ED_spacetype_script();
 void ED_spacetype_text();

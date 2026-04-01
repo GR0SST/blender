@@ -143,6 +143,9 @@ const uchar *get_color_ptr(bTheme *btheme, int spacetype, int colorid)
         case SPACE_ACTION:
           ts = &btheme->space_action;
           break;
+        case SPACE_BETTER_TIMELINE:
+          ts = &btheme->space_action;
+          break;
         case SPACE_SEQ:
           ts = &btheme->space_sequencer;
           break;

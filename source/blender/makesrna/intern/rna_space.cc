@@ -118,6 +118,11 @@ const EnumPropertyItem rna_enum_space_type_items[] = {
      "Timeline",
      "Timeline and playback controls (NOTE: Switch to 'Timeline' mode)"}, /* XXX */
 #endif
+    {SPACE_BETTER_TIMELINE,
+     "BETTER_TIMELINE",
+     ICON_TIME,
+     "Better Timeline",
+     "Custom timeline editor for future timeline tooling"},
     {SPACE_ACTION, "DOPESHEET_EDITOR", ICON_ACTION, "Dope Sheet", "Adjust timing of keyframes"},
     {SPACE_GRAPH,
      "GRAPH_EDITOR",
@@ -759,6 +764,7 @@ static StructRNA *rna_Space_refine(PointerRNA *ptr)
     case SPACE_EMPTY:
     case SPACE_TOPBAR:
     case SPACE_STATUSBAR:
+    case SPACE_BETTER_TIMELINE:
       break;
   }
 

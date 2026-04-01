@@ -115,7 +115,7 @@ static bool change_frame_poll(bContext *C)
    * this shouldn't show up in 3D editor (or others without 2D timeline view) via search
    */
   if (area) {
-    if (ELEM(area->spacetype, SPACE_ACTION, SPACE_NLA, SPACE_CLIP)) {
+    if (ELEM(area->spacetype, SPACE_ACTION, SPACE_NLA, SPACE_CLIP, SPACE_BETTER_TIMELINE)) {
       return true;
     }
     if (area->spacetype == SPACE_SEQ) {
@@ -197,6 +197,11 @@ static void ensure_change_frame_keylist(bContext *C, FrameChangeModalData &op_da
 
     case SPACE_GRAPH:
       anim_data = ed::graph::get_editable_fcurves(ac);
+      break;
+
+    case SPACE_BETTER_TIMELINE:
+    case SPACE_NLA:
+    case SPACE_CLIP:
       break;
 
     default:
@@ -645,6 +650,10 @@ static bool use_playhead_snapping(bContext *C)
   }
 
   ScrArea *area = CTX_wm_area(C);
+
+  if (area->spacetype == SPACE_BETTER_TIMELINE) {
+    return false;
+  }
 
   if (area->spacetype == SPACE_GRAPH) {
     SpaceGraph *graph_editor = static_cast<SpaceGraph *>(area->spacedata.first);

@@ -72,6 +72,7 @@ _modules = [
 
     "space_clip",
     "space_console",
+    "space_better_timeline",
     "space_dopesheet",
     "space_filebrowser",
     "space_graph",

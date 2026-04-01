@@ -1052,6 +1052,25 @@ struct SpaceClip {
 /** \} */
 
 /* -------------------------------------------------------------------- */
+/** \name Better Timeline
+ * \{ */
+
+struct SpaceBetterTimeline {
+  SpaceLink *next = nullptr, *prev = nullptr;
+  /** Storage of regions for inactive spaces. */
+  ListBaseT<ARegion> regionbase = {nullptr, nullptr};
+  char spacetype = 0;
+  char link_flag = 0;
+  char _pad0[6] = {};
+  /* End 'SpaceLink' header. */
+
+  int selected_track_index = -1;
+  int track_panel_width = 0;
+};
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
 /** \name Top Bar
  * \{ */
 

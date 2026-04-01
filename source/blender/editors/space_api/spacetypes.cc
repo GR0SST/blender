@@ -76,6 +76,7 @@ void ED_spacetypes_init()
   ED_spacetype_info();
   ED_spacetype_file();
   ED_spacetype_action();
+  ED_spacetype_better_timeline();
   ED_spacetype_nla();
   ED_spacetype_script();
   ED_spacetype_text();
