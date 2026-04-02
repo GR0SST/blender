@@ -77,6 +77,7 @@ const EnumPropertyItem rna_enum_uilist_layout_type_items[] = {
 
 #  include "ED_asset_library.hh"
 #  include "ED_asset_shelf.hh"
+#  include "ED_better_timeline.hh"
 
 #  include "WM_api.hh"
 
@@ -1140,6 +1141,309 @@ static bool asset_shelf_asset_poll(const AssetShelfType *shelf_type,
   RNA_parameter_list_free(&list);
 
   return is_visible;
+}
+
+static bool better_timeline_track_type_clip_type_poll(
+    const ed::better_timeline::BetterTimelineTrackType *track_type,
+    const ed::better_timeline::BetterTimelineClipType *clip_type)
+{
+  extern FunctionRNA *rna_BetterTimelineTrackType_clip_type_poll_func;
+
+  PointerRNA ptr = RNA_pointer_create_discrete(
+      nullptr,
+      track_type->rna_ext.srna ? track_type->rna_ext.srna : RNA_BetterTimelineTrackType,
+      const_cast<ed::better_timeline::BetterTimelineTrackType *>(track_type));
+  FunctionRNA *func = rna_BetterTimelineTrackType_clip_type_poll_func;
+
+  ParameterList list;
+  RNA_parameter_list_create(&list, &ptr, func);
+  const ed::better_timeline::BetterTimelineClipType *clip_type_ptr = clip_type;
+  RNA_parameter_set_lookup(&list, "clip_type", &clip_type_ptr);
+  track_type->rna_ext.call(nullptr, &ptr, func, &list);
+
+  void *ret;
+  RNA_parameter_get_lookup(&list, "allowed", &ret);
+  const bool is_allowed = *static_cast<bool *>(ret);
+
+  RNA_parameter_list_free(&list);
+
+  return is_allowed;
+}
+
+static void rna_BetterTimelineTrackType_idname_get(PointerRNA *ptr, char *value)
+{
+  const auto *track_type = static_cast<const ed::better_timeline::BetterTimelineTrackType *>(ptr->data);
+  strcpy(value, track_type->idname);
+}
+
+static int rna_BetterTimelineTrackType_idname_length(PointerRNA *ptr)
+{
+  const auto *track_type = static_cast<const ed::better_timeline::BetterTimelineTrackType *>(ptr->data);
+  return int(strlen(track_type->idname));
+}
+
+static void rna_BetterTimelineTrackType_idname_set(PointerRNA *ptr, const char *value)
+{
+  auto *track_type = static_cast<ed::better_timeline::BetterTimelineTrackType *>(ptr->data);
+  BLI_strncpy_utf8(track_type->idname, value, sizeof(track_type->idname));
+}
+
+static void rna_BetterTimelineTrackType_label_get(PointerRNA *ptr, char *value)
+{
+  const auto *track_type = static_cast<const ed::better_timeline::BetterTimelineTrackType *>(ptr->data);
+  strcpy(value, track_type->label);
+}
+
+static int rna_BetterTimelineTrackType_label_length(PointerRNA *ptr)
+{
+  const auto *track_type = static_cast<const ed::better_timeline::BetterTimelineTrackType *>(ptr->data);
+  return int(strlen(track_type->label));
+}
+
+static void rna_BetterTimelineTrackType_label_set(PointerRNA *ptr, const char *value)
+{
+  auto *track_type = static_cast<ed::better_timeline::BetterTimelineTrackType *>(ptr->data);
+  BLI_strncpy_utf8(track_type->label, value, sizeof(track_type->label));
+}
+
+static void rna_BetterTimelineClipType_idname_get(PointerRNA *ptr, char *value)
+{
+  const auto *clip_type = static_cast<const ed::better_timeline::BetterTimelineClipType *>(ptr->data);
+  strcpy(value, clip_type->idname);
+}
+
+static int rna_BetterTimelineClipType_idname_length(PointerRNA *ptr)
+{
+  const auto *clip_type = static_cast<const ed::better_timeline::BetterTimelineClipType *>(ptr->data);
+  return int(strlen(clip_type->idname));
+}
+
+static void rna_BetterTimelineClipType_idname_set(PointerRNA *ptr, const char *value)
+{
+  auto *clip_type = static_cast<ed::better_timeline::BetterTimelineClipType *>(ptr->data);
+  BLI_strncpy_utf8(clip_type->idname, value, sizeof(clip_type->idname));
+}
+
+static void rna_BetterTimelineClipType_label_get(PointerRNA *ptr, char *value)
+{
+  const auto *clip_type = static_cast<const ed::better_timeline::BetterTimelineClipType *>(ptr->data);
+  strcpy(value, clip_type->label);
+}
+
+static int rna_BetterTimelineClipType_label_length(PointerRNA *ptr)
+{
+  const auto *clip_type = static_cast<const ed::better_timeline::BetterTimelineClipType *>(ptr->data);
+  return int(strlen(clip_type->label));
+}
+
+static void rna_BetterTimelineClipType_label_set(PointerRNA *ptr, const char *value)
+{
+  auto *clip_type = static_cast<ed::better_timeline::BetterTimelineClipType *>(ptr->data);
+  BLI_strncpy_utf8(clip_type->label, value, sizeof(clip_type->label));
+}
+
+static StructRNA *rna_BetterTimelineClipType_refine(PointerRNA *ptr)
+{
+  const auto *clip_type = static_cast<const ed::better_timeline::BetterTimelineClipType *>(ptr->data);
+  return (clip_type != nullptr && clip_type->rna_ext.srna != nullptr) ? clip_type->rna_ext.srna :
+                                                                        RNA_BetterTimelineClipType;
+}
+
+static StructRNA *rna_BetterTimelineTrackType_refine(PointerRNA *ptr)
+{
+  const auto *track_type = static_cast<const ed::better_timeline::BetterTimelineTrackType *>(ptr->data);
+  return (track_type != nullptr && track_type->rna_ext.srna != nullptr) ? track_type->rna_ext.srna :
+                                                                          RNA_BetterTimelineTrackType;
+}
+
+static bool rna_BetterTimelineTrackType_unregister(Main * /*bmain*/, StructRNA *type)
+{
+  ed::better_timeline::BetterTimelineTrackType *track_type =
+      static_cast<ed::better_timeline::BetterTimelineTrackType *>(RNA_struct_blender_type_get(type));
+
+  if (track_type == nullptr) {
+    return false;
+  }
+
+  RNA_struct_free_extension(type, &track_type->rna_ext);
+  RNA_struct_free(&RNA_blender_rna_get(), type);
+
+  ed::better_timeline::track_type_unregister(*track_type);
+  WM_main_add_notifier(NC_WINDOW, nullptr);
+  return true;
+}
+
+static StructRNA *rna_BetterTimelineTrackType_register(Main *bmain,
+                                                       ReportList *reports,
+                                                       void *data,
+                                                       const char * /*identifier*/,
+                                                       StructValidateFunc validate,
+                                                       StructCallbackFunc call,
+                                                       StructFreeFunc free)
+{
+  auto track_type = std::make_unique<ed::better_timeline::BetterTimelineTrackType>();
+  PointerRNA dummy_ptr = RNA_pointer_create_discrete(nullptr, RNA_BetterTimelineTrackType, track_type.get());
+  bool have_function[1] = {false};
+
+  if (validate(&dummy_ptr, data, have_function) != 0) {
+    return nullptr;
+  }
+
+  if (track_type->idname[0] == '\0') {
+    BKE_report(reports,
+               RPT_ERROR,
+               "Registering Better Timeline track type class failed because bl_idname is empty");
+    return nullptr;
+  }
+  if (track_type->label[0] == '\0') {
+    BKE_report(reports,
+               RPT_ERROR,
+               "Registering Better Timeline track type class failed because bl_label is empty");
+    return nullptr;
+  }
+
+  if (strlen(track_type->idname) >= sizeof(track_type->idname)) {
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Registering Better Timeline track type class: '%s' is too long, maximum "
+                "length is %d",
+                track_type->idname,
+                int(sizeof(track_type->idname) - 1));
+    return nullptr;
+  }
+
+  if (ed::better_timeline::BetterTimelineTrackType *existing_track_type =
+          ed::better_timeline::track_type_find_from_idname(track_type->idname))
+  {
+    if (existing_track_type->rna_ext.srna != nullptr) {
+      BKE_reportf(reports,
+                  RPT_INFO,
+                  "Registering Better Timeline track type class: '%s' has been registered "
+                  "before, unregistering previous",
+                  track_type->idname);
+      rna_BetterTimelineTrackType_unregister(bmain, existing_track_type->rna_ext.srna);
+    }
+    else {
+      BKE_reportf(reports,
+                  RPT_ERROR,
+                  "Registering Better Timeline track type class: '%s' conflicts with a built-in "
+                  "track type",
+                  track_type->idname);
+      return nullptr;
+    }
+  }
+
+  if (!RNA_struct_available_or_report(reports, track_type->idname)) {
+    return nullptr;
+  }
+
+  track_type->rna_ext.srna = RNA_def_struct_ptr(
+      &RNA_blender_rna_get(), track_type->idname, RNA_BetterTimelineTrackType);
+  track_type->rna_ext.data = data;
+  track_type->rna_ext.call = call;
+  track_type->rna_ext.free = free;
+  RNA_struct_blender_type_set(track_type->rna_ext.srna, track_type.get());
+  track_type->clip_type_poll = have_function[0] ? better_timeline_track_type_clip_type_poll :
+                                                   nullptr;
+
+  StructRNA *srna = track_type->rna_ext.srna;
+  ed::better_timeline::track_type_register(std::move(track_type));
+  WM_main_add_notifier(NC_WINDOW, nullptr);
+  return srna;
+}
+
+static bool rna_BetterTimelineClipType_unregister(Main * /*bmain*/, StructRNA *type)
+{
+  ed::better_timeline::BetterTimelineClipType *clip_type =
+      static_cast<ed::better_timeline::BetterTimelineClipType *>(RNA_struct_blender_type_get(type));
+
+  if (clip_type == nullptr) {
+    return false;
+  }
+
+  RNA_struct_free_extension(type, &clip_type->rna_ext);
+  RNA_struct_free(&RNA_blender_rna_get(), type);
+
+  ed::better_timeline::clip_type_unregister(*clip_type);
+  WM_main_add_notifier(NC_WINDOW, nullptr);
+  return true;
+}
+
+static StructRNA *rna_BetterTimelineClipType_register(Main *bmain,
+                                                      ReportList *reports,
+                                                      void *data,
+                                                      const char * /*identifier*/,
+                                                      StructValidateFunc validate,
+                                                      StructCallbackFunc call,
+                                                      StructFreeFunc free)
+{
+  auto clip_type = std::make_unique<ed::better_timeline::BetterTimelineClipType>();
+  PointerRNA dummy_ptr = RNA_pointer_create_discrete(nullptr, RNA_BetterTimelineClipType, clip_type.get());
+  bool have_function[1] = {false};
+
+  if (validate(&dummy_ptr, data, have_function) != 0) {
+    return nullptr;
+  }
+
+  if (clip_type->idname[0] == '\0') {
+    BKE_report(reports,
+               RPT_ERROR,
+               "Registering Better Timeline clip type class failed because bl_idname is empty");
+    return nullptr;
+  }
+  if (clip_type->label[0] == '\0') {
+    BKE_report(reports,
+               RPT_ERROR,
+               "Registering Better Timeline clip type class failed because bl_label is empty");
+    return nullptr;
+  }
+
+  if (strlen(clip_type->idname) >= sizeof(clip_type->idname)) {
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Registering Better Timeline clip type class: '%s' is too long, maximum "
+                "length is %d",
+                clip_type->idname,
+                int(sizeof(clip_type->idname) - 1));
+    return nullptr;
+  }
+
+  if (ed::better_timeline::BetterTimelineClipType *existing_clip_type =
+          ed::better_timeline::clip_type_find_from_idname(clip_type->idname))
+  {
+    if (existing_clip_type->rna_ext.srna != nullptr) {
+      BKE_reportf(reports,
+                  RPT_INFO,
+                  "Registering Better Timeline clip type class: '%s' has been registered "
+                  "before, unregistering previous",
+                  clip_type->idname);
+      rna_BetterTimelineClipType_unregister(bmain, existing_clip_type->rna_ext.srna);
+    }
+    else {
+      BKE_reportf(reports,
+                  RPT_ERROR,
+                  "Registering Better Timeline clip type class: '%s' conflicts with a built-in "
+                  "clip type",
+                  clip_type->idname);
+      return nullptr;
+    }
+  }
+
+  if (!RNA_struct_available_or_report(reports, clip_type->idname)) {
+    return nullptr;
+  }
+
+  clip_type->rna_ext.srna = RNA_def_struct_ptr(
+      &RNA_blender_rna_get(), clip_type->idname, RNA_BetterTimelineClipType);
+  clip_type->rna_ext.data = data;
+  clip_type->rna_ext.call = call;
+  clip_type->rna_ext.free = free;
+  RNA_struct_blender_type_set(clip_type->rna_ext.srna, clip_type.get());
+
+  StructRNA *srna = clip_type->rna_ext.srna;
+  ed::better_timeline::clip_type_register(std::move(clip_type));
+  WM_main_add_notifier(NC_WINDOW, nullptr);
+  return srna;
 }
 
 static bool asset_shelf_poll(const bContext *C, const AssetShelfType *shelf_type)
@@ -2501,6 +2805,80 @@ static void rna_def_asset_shelf(BlenderRNA *brna)
   RNA_def_property_update(prop, NC_SPACE | ND_REGIONS_ASSET_SHELF, nullptr);
 }
 
+static void rna_def_better_timeline_clip_type(BlenderRNA *brna)
+{
+  StructRNA *srna;
+  PropertyRNA *prop;
+
+  srna = RNA_def_struct(brna, "BetterTimelineClipType", nullptr);
+  RNA_def_struct_ui_text(
+      srna, "Better Timeline Clip Type", "Descriptor that defines a Better Timeline clip type");
+  RNA_def_struct_refine_func(srna, "rna_BetterTimelineClipType_refine");
+  RNA_def_struct_register_funcs(
+      srna, "rna_BetterTimelineClipType_register", "rna_BetterTimelineClipType_unregister", nullptr);
+  RNA_def_struct_translation_context(srna, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  RNA_def_struct_flag(srna, STRUCT_PUBLIC_NAMESPACE_INHERIT);
+
+  prop = RNA_def_property(srna, "bl_idname", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_funcs(prop,
+                                "rna_BetterTimelineClipType_idname_get",
+                                "rna_BetterTimelineClipType_idname_length",
+                                "rna_BetterTimelineClipType_idname_set");
+  RNA_def_property_flag(prop, PROP_REGISTER);
+  RNA_def_property_ui_text(prop, "ID Name", "Unique identifier for the Better Timeline clip type");
+
+  prop = RNA_def_property(srna, "bl_label", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_funcs(prop,
+                                "rna_BetterTimelineClipType_label_get",
+                                "rna_BetterTimelineClipType_label_length",
+                                "rna_BetterTimelineClipType_label_set");
+  RNA_def_property_flag(prop, PROP_REGISTER);
+  RNA_def_property_ui_text(prop, "Label", "Display label for the Better Timeline clip type");
+}
+
+static void rna_def_better_timeline_track_type(BlenderRNA *brna)
+{
+  StructRNA *srna;
+  PropertyRNA *prop;
+  PropertyRNA *parm;
+  FunctionRNA *func;
+
+  srna = RNA_def_struct(brna, "BetterTimelineTrackType", nullptr);
+  RNA_def_struct_ui_text(
+      srna, "Better Timeline Track Type", "Descriptor that defines a Better Timeline track type");
+  RNA_def_struct_refine_func(srna, "rna_BetterTimelineTrackType_refine");
+  RNA_def_struct_register_funcs(srna,
+                                "rna_BetterTimelineTrackType_register",
+                                "rna_BetterTimelineTrackType_unregister",
+                                nullptr);
+  RNA_def_struct_translation_context(srna, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  RNA_def_struct_flag(srna, STRUCT_PUBLIC_NAMESPACE_INHERIT);
+
+  prop = RNA_def_property(srna, "bl_idname", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_funcs(prop,
+                                "rna_BetterTimelineTrackType_idname_get",
+                                "rna_BetterTimelineTrackType_idname_length",
+                                "rna_BetterTimelineTrackType_idname_set");
+  RNA_def_property_flag(prop, PROP_REGISTER);
+  RNA_def_property_ui_text(prop, "ID Name", "Unique identifier for the Better Timeline track type");
+
+  prop = RNA_def_property(srna, "bl_label", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_funcs(prop,
+                                "rna_BetterTimelineTrackType_label_get",
+                                "rna_BetterTimelineTrackType_label_length",
+                                "rna_BetterTimelineTrackType_label_set");
+  RNA_def_property_flag(prop, PROP_REGISTER);
+  RNA_def_property_ui_text(prop, "Label", "Display label for the Better Timeline track type");
+
+  func = RNA_def_function(srna, "clip_type_poll", nullptr);
+  RNA_def_function_ui_description(
+      func, "Return whether this track type accepts clips of the given clip type");
+  RNA_def_function_flag(func, FUNC_NO_SELF | FUNC_REGISTER_OPTIONAL);
+  RNA_def_function_return(func, RNA_def_boolean(func, "allowed", false, "", ""));
+  parm = RNA_def_pointer(func, "clip_type", "BetterTimelineClipType", "", "");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+}
+
 static void rna_def_file_handler(BlenderRNA *brna)
 {
   StructRNA *srna;
@@ -2594,6 +2972,8 @@ void RNA_def_ui(BlenderRNA *brna)
   rna_def_header(brna);
   rna_def_menu(brna);
   rna_def_asset_shelf(brna);
+  rna_def_better_timeline_clip_type(brna);
+  rna_def_better_timeline_track_type(brna);
   rna_def_file_handler(brna);
   rna_def_layout_panel_state(brna);
 }

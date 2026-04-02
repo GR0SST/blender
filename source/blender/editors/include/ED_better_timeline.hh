@@ -1,0 +1,70 @@
+/* SPDX-FileCopyrightText: 2026 Blender Authors
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later */
+
+/** \file
+ * \ingroup editors
+ */
+
+#pragma once
+
+#include <memory>
+#include <string>
+
+#include "BLI_function_ref.hh"
+#include "BLI_string_ref.hh"
+#include "BLI_vector.hh"
+
+#include "RNA_types.hh"
+
+namespace blender {
+
+struct BetterTimelineClip;
+struct BetterTimelineTrack;
+
+namespace ed::better_timeline {
+
+constexpr int BETTER_TIMELINE_TYPE_IDNAME_MAX = 64;
+
+struct BetterTimelineClipType {
+  char idname[BETTER_TIMELINE_TYPE_IDNAME_MAX] = "";
+  char label[BETTER_TIMELINE_TYPE_IDNAME_MAX] = "";
+  std::string description;
+  ExtensionRNA rna_ext = {};
+};
+
+struct BetterTimelineTrackType {
+  char idname[BETTER_TIMELINE_TYPE_IDNAME_MAX] = "";
+  char label[BETTER_TIMELINE_TYPE_IDNAME_MAX] = "";
+  std::string description;
+  Vector<std::string> compatible_clip_type_ids;
+  bool (*clip_type_poll)(const BetterTimelineTrackType *track_type,
+                         const BetterTimelineClipType *clip_type) = nullptr;
+  ExtensionRNA rna_ext = {};
+};
+
+void register_builtin_types();
+
+void track_type_register(std::unique_ptr<BetterTimelineTrackType> track_type);
+void track_type_unregister(const BetterTimelineTrackType &track_type);
+void clip_type_register(std::unique_ptr<BetterTimelineClipType> clip_type);
+void clip_type_unregister(const BetterTimelineClipType &clip_type);
+
+BetterTimelineTrackType *track_type_find_from_idname(StringRef idname);
+BetterTimelineClipType *clip_type_find_from_idname(StringRef idname);
+const BetterTimelineTrackType *default_track_type_get();
+
+void foreach_track_type(FunctionRef<void(const BetterTimelineTrackType &track_type)> fn);
+void foreach_clip_type(FunctionRef<void(const BetterTimelineClipType &clip_type)> fn);
+
+bool track_type_accepts_clip_type(const BetterTimelineTrackType &track_type,
+                                  const BetterTimelineClipType &clip_type);
+bool track_type_accepts_clip_type(StringRef track_type_idname, StringRef clip_type_idname);
+bool track_accepts_clip_type(const BetterTimelineTrack &track, StringRef clip_type_idname);
+bool track_accepts_clip(const BetterTimelineTrack &track, const BetterTimelineClip &clip);
+
+Vector<const BetterTimelineClipType *> compatible_clip_types(
+    const BetterTimelineTrackType &track_type);
+
+}  // namespace ed::better_timeline
+}  // namespace blender

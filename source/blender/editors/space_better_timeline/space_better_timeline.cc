@@ -21,12 +21,15 @@
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
+#include "BKE_idprop.hh"
 #include "BKE_main.hh"
+#include "BKE_report.hh"
 #include "BKE_scene.hh"
 #include "BKE_screen.hh"
 #include "BKE_undo_system.hh"
 
 #include "ED_anim_api.hh"
+#include "ED_better_timeline.hh"
 #include "ED_screen.hh"
 #include "ED_space_api.hh"
 #include "ED_time_scrub_ui.hh"
@@ -46,6 +49,7 @@
 #include "UI_view2d.hh"
 
 #include "RNA_access.hh"
+#include "RNA_define.hh"
 
 #include "BLO_read_write.hh"
 
@@ -125,10 +129,168 @@ static float better_timeline_row_ymin(const ARegion *region,
                                       const SpaceBetterTimeline *sbetter_timeline,
                                       const int row_index);
 static void better_timeline_track_drag_visual_state_clear();
+static void better_timeline_track_ensure_type(BetterTimelineTrack *track);
+static void better_timeline_clip_ensure_type(BetterTimelineTrack *track, BetterTimelineClip *clip);
 
 static bool better_timeline_track_is_selected(const BetterTimelineTrack *track)
 {
   return track != nullptr && track->selected != 0;
+}
+
+static void better_timeline_clips_free(ListBaseT<BetterTimelineClip> *clips)
+{
+  if (clips == nullptr) {
+    return;
+  }
+
+  BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(clips->first);
+  while (clip != nullptr) {
+    BetterTimelineClip *clip_next = clip->next;
+    if (clip->properties != nullptr) {
+      IDP_FreeProperty(clip->properties);
+      clip->properties = nullptr;
+    }
+    MEM_delete(clip);
+    clip = clip_next;
+  }
+
+  BLI_listbase_clear(clips);
+}
+
+static BetterTimelineClip *better_timeline_clip_duplicate(const BetterTimelineClip *clip_src)
+{
+  if (clip_src == nullptr) {
+    return nullptr;
+  }
+
+  auto *clip_dst = MEM_new<BetterTimelineClip>(__func__);
+  *clip_dst = *clip_src;
+  clip_dst->next = nullptr;
+  clip_dst->prev = nullptr;
+  clip_dst->properties = (clip_src->properties != nullptr) ? IDP_CopyProperty(clip_src->properties) :
+                                                              nullptr;
+  return clip_dst;
+}
+
+static void better_timeline_clips_duplicate(ListBaseT<BetterTimelineClip> *dst,
+                                            const ListBaseT<BetterTimelineClip> *src)
+{
+  BLI_listbase_clear(dst);
+  if (src == nullptr) {
+    return;
+  }
+
+  for (const BetterTimelineClip *clip_src = static_cast<const BetterTimelineClip *>(src->first);
+       clip_src != nullptr;
+       clip_src = clip_src->next)
+  {
+    if (BetterTimelineClip *clip_dst = better_timeline_clip_duplicate(clip_src)) {
+      BLI_addtail(dst, clip_dst);
+    }
+  }
+}
+
+static void better_timeline_track_free(BetterTimelineTrack *track)
+{
+  if (track == nullptr) {
+    return;
+  }
+
+  better_timeline_clips_free(&track->clips);
+  if (track->properties != nullptr) {
+    IDP_FreeProperty(track->properties);
+    track->properties = nullptr;
+  }
+  MEM_delete(track);
+}
+
+static BetterTimelineTrack *better_timeline_track_duplicate(const BetterTimelineTrack *track_src)
+{
+  if (track_src == nullptr) {
+    return nullptr;
+  }
+
+  auto *track_dst = MEM_new<BetterTimelineTrack>(__func__);
+  *track_dst = *track_src;
+  track_dst->next = nullptr;
+  track_dst->prev = nullptr;
+  BLI_listbase_clear(&track_dst->clips);
+  better_timeline_clips_duplicate(&track_dst->clips, &track_src->clips);
+  track_dst->properties = (track_src->properties != nullptr) ? IDP_CopyProperty(track_src->properties) :
+                                                                nullptr;
+  better_timeline_track_ensure_type(track_dst);
+  for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track_dst->clips.first); clip != nullptr;
+       clip = clip->next)
+  {
+    better_timeline_clip_ensure_type(track_dst, clip);
+  }
+  return track_dst;
+}
+
+static const ed::better_timeline::BetterTimelineTrackType *better_timeline_default_track_type()
+{
+  return ed::better_timeline::default_track_type_get();
+}
+
+static const ed::better_timeline::BetterTimelineTrackType *better_timeline_track_type_get(
+    const BetterTimelineTrack *track)
+{
+  if (track == nullptr || track->track_type[0] == '\0') {
+    return better_timeline_default_track_type();
+  }
+  return ed::better_timeline::track_type_find_from_idname(track->track_type);
+}
+
+static const char *better_timeline_track_type_label_get(const BetterTimelineTrack *track)
+{
+  if (const ed::better_timeline::BetterTimelineTrackType *track_type =
+          better_timeline_track_type_get(track))
+  {
+    return track_type->label[0] != '\0' ? track_type->label : track_type->idname;
+  }
+  return "Unknown Track Type";
+}
+
+static void better_timeline_track_ensure_type(BetterTimelineTrack *track)
+{
+  if (track == nullptr) {
+    return;
+  }
+
+  if (track->track_type[0] != '\0' &&
+      ed::better_timeline::track_type_find_from_idname(track->track_type) != nullptr)
+  {
+    return;
+  }
+
+  if (const ed::better_timeline::BetterTimelineTrackType *default_track_type =
+          better_timeline_default_track_type())
+  {
+    STRNCPY_UTF8(track->track_type, default_track_type->idname);
+  }
+}
+
+static void better_timeline_clip_ensure_type(BetterTimelineTrack *track, BetterTimelineClip *clip)
+{
+  if (track == nullptr || clip == nullptr) {
+    return;
+  }
+
+  if (clip->clip_type[0] != '\0' &&
+      ed::better_timeline::track_accepts_clip(*track, *clip))
+  {
+    return;
+  }
+
+  if (const ed::better_timeline::BetterTimelineTrackType *track_type =
+          better_timeline_track_type_get(track))
+  {
+    const Vector<const ed::better_timeline::BetterTimelineClipType *> compatible_clip_types =
+        ed::better_timeline::compatible_clip_types(*track_type);
+    if (!compatible_clip_types.is_empty()) {
+      STRNCPY_UTF8(clip->clip_type, compatible_clip_types.first()->idname);
+    }
+  }
 }
 
 static void better_timeline_track_set_selected(BetterTimelineTrack *track, const bool selected)
@@ -182,10 +344,12 @@ static int better_timeline_track_index_from_ptr(const SpaceBetterTimeline *sbett
   return -1;
 }
 
-static BetterTimelineTrack *better_timeline_track_create(const int track_name_index)
+static BetterTimelineTrack *better_timeline_track_create(
+    const ed::better_timeline::BetterTimelineTrackType &track_type, const int track_name_index)
 {
   auto *track = MEM_new<BetterTimelineTrack>(__func__);
   SNPRINTF(track->name, "Track%d", std::max(1, track_name_index));
+  STRNCPY_UTF8(track->track_type, track_type.idname);
   track->selected = 0;
   return track;
 }
@@ -195,7 +359,14 @@ static void better_timeline_tracks_free(ListBaseT<BetterTimelineTrack> *tracks)
   if (tracks == nullptr) {
     return;
   }
-  BLI_freelistN(tracks);
+  BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
+  while (track != nullptr) {
+    BetterTimelineTrack *track_next = track->next;
+    better_timeline_track_free(track);
+    track = track_next;
+  }
+
+  BLI_listbase_clear(tracks);
 }
 
 static void better_timeline_tracks_duplicate(ListBase *dst, const ListBase *src)
@@ -204,7 +375,28 @@ static void better_timeline_tracks_duplicate(ListBase *dst, const ListBase *src)
   if (src == nullptr) {
     return;
   }
-  BLI_duplicatelist(dst, src);
+
+  for (const BetterTimelineTrack *track_src = static_cast<const BetterTimelineTrack *>(src->first);
+       track_src != nullptr;
+       track_src = track_src->next)
+  {
+    if (BetterTimelineTrack *track_dst = better_timeline_track_duplicate(track_src)) {
+      BLI_addtail(dst, track_dst);
+    }
+  }
+}
+
+static void better_timeline_track_selection_clear(ListBase *tracks)
+{
+  if (tracks == nullptr) {
+    return;
+  }
+
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first); track != nullptr;
+       track = track->next)
+  {
+    better_timeline_track_set_selected(track, false);
+  }
 }
 
 static void better_timeline_state_restore(SpaceBetterTimeline *dst,
@@ -220,6 +412,17 @@ static void better_timeline_state_restore(SpaceBetterTimeline *dst,
 
   better_timeline_tracks_free(&dst->tracks);
   better_timeline_tracks_duplicate(&dst->tracks, tracks_src);
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(dst->tracks.first); track != nullptr;
+       track = track->next)
+  {
+    better_timeline_track_ensure_type(track);
+    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+         clip != nullptr;
+         clip = clip->next)
+    {
+      better_timeline_clip_ensure_type(track, clip);
+    }
+  }
   dst->selected_track_index = selected_track_index;
   dst->next_track_name_index = std::max(1, next_track_name_index);
   dst->track_panel_width = track_panel_width;
@@ -306,7 +509,8 @@ static bool better_timeline_undosys_step_encode(bContext *C, Main * /*bmain*/, U
 
   us->space = sbetter_timeline;
   better_timeline_tracks_duplicate(&us->tracks, &sbetter_timeline->tracks);
-  us->selected_track_index = sbetter_timeline->selected_track_index;
+  better_timeline_track_selection_clear(&us->tracks);
+  us->selected_track_index = -1;
   us->next_track_name_index = sbetter_timeline->next_track_name_index;
   us->track_panel_width = sbetter_timeline->track_panel_width;
   us->track_scroll_offset = sbetter_timeline->track_scroll_offset;
@@ -1290,13 +1494,27 @@ static bool better_timeline_add_track_poll(bContext *C)
   return better_timeline_track_select_poll(C);
 }
 
-static wmOperatorStatus better_timeline_add_track_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus better_timeline_add_track_exec(bContext *C, wmOperator *op)
 {
   ScrArea *area = CTX_wm_area(C);
   ARegion *region = CTX_wm_region(C);
   auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
 
-  BetterTimelineTrack *track = better_timeline_track_create(sbetter_timeline->next_track_name_index);
+  char track_type_idname[ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX];
+  RNA_string_get(op->ptr, "track_type", track_type_idname);
+
+  const ed::better_timeline::BetterTimelineTrackType *track_type =
+      (track_type_idname[0] != '\0') ?
+          ed::better_timeline::track_type_find_from_idname(track_type_idname) :
+          better_timeline_default_track_type();
+
+  if (track_type == nullptr) {
+    BKE_report(op->reports, RPT_ERROR, "No Better Timeline track type is available");
+    return OPERATOR_CANCELLED;
+  }
+
+  BetterTimelineTrack *track = better_timeline_track_create(*track_type,
+                                                            sbetter_timeline->next_track_name_index);
   BLI_addtail(&sbetter_timeline->tracks, track);
   sbetter_timeline->next_track_name_index = std::max(1, sbetter_timeline->next_track_name_index + 1);
   better_timeline_select_only_track(sbetter_timeline, better_timeline_track_count(sbetter_timeline) - 1);
@@ -1333,6 +1551,13 @@ static void BETTER_TIMELINE_OT_add_track(wmOperatorType *ot)
   ot->poll = better_timeline_add_track_poll;
 
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
+
+  RNA_def_string(ot->srna,
+                 "track_type",
+                 nullptr,
+                 ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX,
+                 "Track Type",
+                 "Registered Better Timeline track type to create");
 }
 
 static bool better_timeline_add_track_menu_poll(bContext *C)
@@ -1351,7 +1576,12 @@ static wmOperatorStatus better_timeline_add_track_menu_invoke(bContext *C,
 
   ui::PopupMenu *pup = ui::popup_menu_begin(C, "Add Track", ICON_NONE);
   ui::Layout &layout = *popup_menu_layout(pup);
-  layout.op("BETTER_TIMELINE_OT_add_track", "Test Track", ICON_NONE);
+  ed::better_timeline::foreach_track_type([&](const ed::better_timeline::BetterTimelineTrackType &track_type) {
+    PointerRNA op_ptr = layout.op("BETTER_TIMELINE_OT_add_track",
+                                  track_type.label[0] != '\0' ? track_type.label : track_type.idname,
+                                  ICON_NONE);
+    RNA_string_set(&op_ptr, "track_type", track_type.idname);
+  });
   popup_menu_end(C, pup);
   return OPERATOR_INTERFACE;
 }
@@ -1369,10 +1599,21 @@ static void BETTER_TIMELINE_OT_add_track_menu(wmOperatorType *ot)
 }
 
 static bool better_timeline_track_requires_delete_confirm(
-    const SpaceBetterTimeline * /*sbetter_timeline*/)
+    const SpaceBetterTimeline *sbetter_timeline)
 {
-  /* Placeholder tracks currently have no clips, so they can be removed immediately.
-   * Once clip data exists, this should return true for non-empty tracks. */
+  if (sbetter_timeline == nullptr) {
+    return false;
+  }
+
+  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
+           sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (better_timeline_track_is_selected(track) && !BLI_listbase_is_empty(&track->clips)) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -1391,7 +1632,7 @@ static wmOperatorStatus better_timeline_delete_track_exec(bContext *C, wmOperato
     BetterTimelineTrack *track_next = track->next;
     if (better_timeline_track_is_selected(track)) {
       BLI_remlink(&sbetter_timeline->tracks, track);
-      MEM_delete(track);
+      better_timeline_track_free(track);
     }
     track = track_next;
   }
@@ -2116,6 +2357,7 @@ static SpaceLink *better_timeline_create(const ScrArea * /*area*/, const Scene *
   sbetter_timeline->next_track_name_index = 1;
   sbetter_timeline->track_panel_width = 0;
   sbetter_timeline->track_scroll_offset = 0;
+  ed::better_timeline::register_builtin_types();
 
   region = BKE_area_region_new();
   BLI_addtail(&sbetter_timeline->regionbase, region);
@@ -2141,8 +2383,9 @@ static SpaceLink *better_timeline_duplicate(SpaceLink *sl)
 {
   SpaceBetterTimeline *sbetter_timeline = MEM_dupalloc(
       reinterpret_cast<SpaceBetterTimeline *>(sl));
-  BLI_duplicatelist(&sbetter_timeline->tracks,
-                    &reinterpret_cast<SpaceBetterTimeline *>(sl)->tracks);
+  BLI_listbase_clear(&sbetter_timeline->tracks);
+  better_timeline_tracks_duplicate(&sbetter_timeline->tracks,
+                                   &reinterpret_cast<SpaceBetterTimeline *>(sl)->tracks);
   return reinterpret_cast<SpaceLink *>(sbetter_timeline);
 }
 
@@ -2373,6 +2616,24 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     const float y = better_timeline_row_ymin(region, sbetter_timeline, row_index) +
                     (BETTER_TIMELINE_ROW_HEIGHT * 0.5f) - (5.0f * UI_SCALE_FAC);
     BLF_draw_default(16.0f * UI_SCALE_FAC, y, 0.0f, track->name, BLF_DRAW_STR_DUMMY_MAX);
+
+    const char *track_type_label = better_timeline_track_type_label_get(track);
+    if (track_type_label[0] != '\0') {
+      uchar secondary_text_color[4] = {
+          text_color[0],
+          text_color[1],
+          text_color[2],
+          static_cast<uchar>(better_timeline_track_is_selected(track) ? 180 : 128)};
+      BLF_color4ubv(BLF_default(), secondary_text_color);
+      const float label_width = BLF_width(BLF_default(),
+                                          track_type_label,
+                                          BLI_strnlen(track_type_label,
+                                                      ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX));
+      const float label_x = std::max(16.0f * UI_SCALE_FAC,
+                                     float(left_panel_width) - label_width - (16.0f * UI_SCALE_FAC));
+      BLF_draw_default(
+          label_x, y, 0.0f, track_type_label, ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX);
+    }
   }
   better_timeline_clip_end(content_clip_state);
 
@@ -2496,8 +2757,28 @@ static void better_timeline_header_region_listener(const wmRegionListenerParams 
 static void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
 {
   auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
+  ed::better_timeline::register_builtin_types();
 
   BLO_read_struct_list(reader, BetterTimelineTrack, &sbetter_timeline->tracks);
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    BLO_read_struct(reader, IDProperty, &track->properties);
+    IDP_BlendDataRead(reader, &track->properties);
+
+    BLO_read_struct_list(reader, BetterTimelineClip, &track->clips);
+    better_timeline_track_ensure_type(track);
+
+    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+         clip != nullptr;
+         clip = clip->next)
+    {
+      BLO_read_struct(reader, IDProperty, &clip->properties);
+      IDP_BlendDataRead(reader, &clip->properties);
+      better_timeline_clip_ensure_type(track, clip);
+    }
+  }
 
   if (!better_timeline_has_selected_track(sbetter_timeline)) {
     sbetter_timeline->selected_track_index = -1;
@@ -2521,7 +2802,26 @@ static void better_timeline_space_blend_write(BlendWriter *writer, SpaceLink *sl
 {
   auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
 
-  writer->write_struct_list(&sbetter_timeline->tracks);
+  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
+           sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    writer->write_struct(track);
+    if (track->properties != nullptr) {
+      IDP_BlendWrite(writer, track->properties);
+    }
+
+    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
+         clip != nullptr;
+         clip = clip->next)
+    {
+      writer->write_struct(clip);
+      if (clip->properties != nullptr) {
+        IDP_BlendWrite(writer, clip->properties);
+      }
+    }
+  }
   writer->write_struct(sbetter_timeline);
 }
 

@@ -32,6 +32,7 @@ struct FileList;
 struct FileSelectParams;
 struct Histogram;
 struct ID;
+struct IDProperty;
 struct Image;
 struct Mask;
 struct MovieClip;
@@ -1055,12 +1056,29 @@ struct SpaceClip {
 /** \name Better Timeline
  * \{ */
 
+struct BetterTimelineClip {
+  BetterTimelineClip *next = nullptr, *prev = nullptr;
+
+  char name[64] = "";
+  char clip_type[64] = "";
+  char _pad0[8] = {};
+
+  float start_frame = 0.0f;
+  float end_frame = 0.0f;
+
+  IDProperty *properties = nullptr;
+};
+
 struct BetterTimelineTrack {
   BetterTimelineTrack *next = nullptr, *prev = nullptr;
 
   char name[64] = "";
+  char track_type[64] = "";
   char selected = 0;
-  char _pad[7] = {};
+  char _pad0[7] = {};
+
+  ListBaseT<BetterTimelineClip> clips = {nullptr, nullptr};
+  IDProperty *properties = nullptr;
 };
 
 struct SpaceBetterTimeline {

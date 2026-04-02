@@ -12,10 +12,12 @@ Current behavior:
 - The editor uses a clip-oriented custom header with playback and marker controls, but avoids keyframe-specific timeline UI.
 - The main region now has a Unity-like shell: left track-side panel, top ruler strip, playhead, frame grid, and shaded areas outside the scene frame range.
 - `Track List Pane` now starts empty and exposes a `+` button in its top strip; clicking it appends a new track, assigns its name once at creation time (`Track1`, `Track2`, ...), and selects it.
-- There are still no real clips yet; track rows are editor-managed placeholders for future timeline work.
+- There are still no real clip editing interactions yet, but the underlying data model is now typed and clip-capable; track rows are no longer meant to be treated as untyped placeholders in architecture decisions.
 
 Primary files for this editor:
 - `source/blender/editors/space_better_timeline/space_better_timeline.cc`
+- `source/blender/editors/space_better_timeline/better_timeline_types.cc`
+- `source/blender/editors/include/ED_better_timeline.hh`
 - `source/blender/editors/animation/anim_ops.cc`
 - `source/blender/editors/space_better_timeline/CMakeLists.txt`
 - `source/blender/editors/CMakeLists.txt`
@@ -24,18 +26,45 @@ Primary files for this editor:
 - `source/blender/makesdna/DNA_space_enums.h`
 - `source/blender/makesdna/DNA_space_types.h`
 - `source/blender/makesrna/intern/rna_space.cc`
+- `source/blender/makesrna/intern/rna_ui.cc`
 - `scripts/startup/bl_ui/space_better_timeline.py`
 - `scripts/startup/bl_ui/__init__.py`
 
 What each file is for:
-- `space_better_timeline.cc`: editor creation, region registration, main timeline shell drawing, track selection behavior, and Better Timeline keymap wiring.
+- `space_better_timeline.cc`: editor creation, region registration, main timeline shell drawing, track selection behavior, Better Timeline keymap wiring, typed track creation flow, and Better Timeline track/clip DNA copy/free/read-write handling.
+- `better_timeline_types.cc`: centralized Better Timeline runtime registry for `TrackType`, `ClipType`, built-in types, and compatibility checks.
+- `ED_better_timeline.hh`: public editor-side API for Better Timeline type lookup, registration, and compatibility queries.
 - `anim_ops.cc`: shared frame-change/scrubbing operator logic; Better Timeline has to be explicitly allowed there for the ruler to be interactive.
 - `ED_space_api.hh` and `spacetypes.cc`: global editor-type registration on startup.
-- `DNA_space_enums.h` and `DNA_space_types.h`: persistent space id, DNA struct, and Better Timeline selection state storage.
+- `DNA_space_enums.h` and `DNA_space_types.h`: persistent space id, DNA structs for `SpaceBetterTimeline`, typed `BetterTimelineTrack`, and typed `BetterTimelineClip`.
 - `rna_space.cc`: editor selector menu entry and UI-facing label/icon.
+- `rna_ui.cc`: runtime RNA registration hooks for addon-defined Better Timeline `TrackType` and `ClipType`.
 - `space_better_timeline.py`: Python header UI, including the standard editor-type switch button.
 - `space_better_timeline.py`: Python header UI, menus, playback controls, and clip-oriented top bar behavior.
 - `bl_ui/__init__.py`: loads the Better Timeline UI module on startup.
+
+Typed data-model rules that must now be treated as foundational:
+- `BetterTimelineTrack` is typed. The persistent identifier lives in `BetterTimelineTrack::track_type` as a string idname.
+- `BetterTimelineClip` is typed. The persistent identifier lives in `BetterTimelineClip::clip_type` as a string idname.
+- `BetterTimelineTrack::clips` is the authoritative per-track clip ownership list. Do not design future clip storage as a detached global list that later maps back to tracks.
+- `BetterTimelineTrack::properties` and `BetterTimelineClip::properties` are the extensible payload roots for type-specific data. Do not replace the typed model with a single shapeless universal blob; common clip fields belong in the base DNA struct and type-specific payload belongs in these properties.
+- Compatibility between track types and clip types is a model/runtime rule, not a UI-only validation rule.
+- All clip-affecting operations must use the same centralized compatibility logic from the Better Timeline registry/API. This includes create clip, paste, duplicate, drag/drop between tracks, and future import/addon clip creation.
+- Do not scatter `if (track_type == ...)` decision logic across editor code. Add new behavior through the registry/model layer and query compatibility/capabilities from there.
+- A clip must not be inserted into an incompatible track type, and clip moves across track types must remain denied unless the destination track type explicitly accepts that clip type.
+- Addons are expected to be able to register new `TrackType` and `ClipType` descriptors at runtime, and custom track types may define compatibility through a centralized poll/callback rather than hardcoded lists.
+- UI should read restrictions from the model. Creation menus and future drag/drop feedback must be driven by registered types and compatibility results, not duplicated hand-written rules.
+- The built-in examples currently registered are `Test Track` -> `Test Clip`, `Animation Track` -> `Animation Clip`, and `Spline Track` -> `Spline Clip`.
+- The track add menu is now registry-driven. `Shift+A` should evolve by reading registered track types, not by hardcoding literal menu entries.
+- Track rows may still look visually simple, but architecturally they are typed tracks already. Do not introduce temporary untyped APIs that would later need to be broken to support real clips.
+
+Current runtime architecture:
+- The Better Timeline runtime registry lives in `better_timeline_types.cc` and is exposed through `ED_better_timeline.hh`.
+- Built-in Better Timeline track/clip types are registered on demand during Better Timeline setup/read paths; future built-ins should be added there, not ad hoc inside the editor UI code.
+- Addon-facing RNA registration for Better Timeline types lives in `rna_ui.cc` as `BetterTimelineTrackType` and `BetterTimelineClipType`.
+- `BetterTimelineTrackType::clip_type_poll` is the central extensibility point for custom compatibility logic when a simple static compatibility list is not enough.
+- Better Timeline undo/duplicate logic must deep-copy track/clip properties and clip lists. Do not revert to shallow `BLI_duplicatelist()` behavior for tracks now that nested typed data exists.
+- Better Timeline blend read/write must handle nested `clips` and `IDProperty` payloads explicitly; plain struct-list serialization is no longer sufficient by itself.
 
 Main drawing pieces already in use:
 - `ED_time_scrub_draw()` and `ED_time_scrub_draw_current_frame()` provide the top ruler strip and active-frame marker.
@@ -49,18 +78,20 @@ Main drawing pieces already in use:
 - `ANIM_OT_change_frame` must explicitly allow `SPACE_BETTER_TIMELINE` in `anim_ops.cc`; without that, the ruler renders but click/drag scrubbing does nothing.
 - Playhead snapping is currently disabled for Better Timeline in `anim_ops.cc` until this editor has its own snap target/keylist logic.
 - Better Timeline tracks now persist in `SpaceBetterTimeline::tracks` as a DNA `ListBase`; do not regenerate track names from visual row order.
+- Better Timeline clips now persist per track in `BetterTimelineTrack::clips`; future clip work must treat those lists as authoritative.
 - Track selection is now multi-select on `BetterTimelineTrack::selected`; `SpaceBetterTimeline::selected_track_index` is the active/anchor row for range selection and future context actions.
 - The next autogenerated track label is stored in `SpaceBetterTimeline::next_track_name_index`, so deleting/reordering rows must not rename existing tracks.
 - The left track column width is also stored in `SpaceBetterTimeline` as `track_panel_width`, so divider resize survives redraws and can later survive more custom layout work.
 - Vertical `Track List Pane` scroll offset currently stores in `SpaceBetterTimeline` as `track_scroll_offset`.
 - The `+` button in the `Track List Pane` top strip is handled by `BETTER_TIMELINE_OT_add_track`; keep its hit-test separate from scrub, splitter, and row-selection hit-tests.
+- `BETTER_TIMELINE_OT_add_track` now accepts a `track_type` RNA string property. When adding new entry points for track creation, pass a registered track type idname rather than creating untyped rows.
 - Track deletion is handled by `BETTER_TIMELINE_OT_delete_track` on `Delete` and `X`.
 - `Shift`-click extends selection from the active/anchor track and adds the whole range between both rows without clearing already selected tracks.
 - `Cmd`-click toggles the clicked row in the current selection without clearing the rest.
 - `Esc` clears the current Better Timeline track selection.
 - `Space` in Better Timeline is keyed to the standard `SCREEN_OT_animation_play`, so playback toggles without a custom transport operator.
 - `Shift+A` opens a small Better Timeline add-track popup only when no tracks are selected; for now it exposes just `Test Track`.
-- Placeholder tracks currently delete immediately with no confirmation; once clip data exists, the delete operator should switch to the existing confirm path for non-empty tracks instead of changing keymap behavior.
+- Placeholder tracks currently still delete immediately if they have no clips; non-empty typed tracks should use the existing confirm path instead of changing keymap behavior.
 - Track-structure edits such as add, delete, and reorder are expected to be undoable from Better Timeline with `Cmd+Z` / `Shift+Cmd+Z`; future track/clip editing operators should keep using `OPTYPE_UNDO` and ensure the Better Timeline keymap exposes undo/redo for them.
 - Better Timeline editor state lives in `SpaceBetterTimeline` on `bScreen`; in Blender 5.1 `bScreen` uses `IDTYPE_FLAGS_NO_MEMFILE_UNDO`, so track/clip state changes will not participate in regular global memfile undo unless Better Timeline provides its own custom `UndoType`.
 - Track selection uses `BETTER_TIMELINE_OT_track_select` on a dedicated `Better Timeline` keymap and passes through clicks in the top scrub bar.
@@ -77,9 +108,11 @@ Main drawing pieces already in use:
 
 Likely future touchpoints for Better Timeline work:
 - Add operators and keymaps in `space_better_timeline.cc` or sibling files in the same folder.
+- Extend the type registry and typed clip/track runtime API in `better_timeline_types.cc` / `ED_better_timeline.hh`.
 - Add custom headers, panels, tools, or sub-modes by extending this editor's region types.
 - Evolve `space_better_timeline.py` toward a more Unity-style clip timeline header and transport bar.
-- Add real track data, clip drawing, selection, and drag/drop in `space_better_timeline.cc` or split that logic into dedicated sibling draw/operator files when it starts growing.
+- Add real clip drawing, selection, editing, and drag/drop in `space_better_timeline.cc` or split that logic into dedicated sibling draw/operator files when it starts growing.
+- Add addon-visible typed behavior in `rna_ui.cc` if Better Timeline types need richer registration callbacks later.
 - If the editor needs theme-specific colors later, review `source/blender/editors/interface/resources.cc`.
 
 Working assumption for future changes:

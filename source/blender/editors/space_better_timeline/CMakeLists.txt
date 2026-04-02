@@ -14,6 +14,7 @@ set(INC_SYS
 )
 
 set(SRC
+  better_timeline_types.cc
   space_better_timeline.cc
 )
 
