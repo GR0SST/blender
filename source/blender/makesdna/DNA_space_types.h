@@ -1055,6 +1055,14 @@ struct SpaceClip {
 /** \name Better Timeline
  * \{ */
 
+struct BetterTimelineTrack {
+  BetterTimelineTrack *next = nullptr, *prev = nullptr;
+
+  char name[64] = "";
+  char selected = 0;
+  char _pad[7] = {};
+};
+
 struct SpaceBetterTimeline {
   SpaceLink *next = nullptr, *prev = nullptr;
   /** Storage of regions for inactive spaces. */
@@ -1064,8 +1072,11 @@ struct SpaceBetterTimeline {
   char _pad0[6] = {};
   /* End 'SpaceLink' header. */
 
+  ListBaseT<BetterTimelineTrack> tracks = {nullptr, nullptr};
   int selected_track_index = -1;
+  int next_track_name_index = 1;
   int track_panel_width = 0;
+  int track_scroll_offset = 0;
 };
 
 /** \} */

@@ -29,6 +29,8 @@
 
 namespace blender {
 
+void ED_better_timeline_undosys_type(UndoType *ut);
+
 void ED_undosys_type_init()
 {
   /* Edit Modes */
@@ -42,6 +44,7 @@ void ED_undosys_type_init()
   BKE_undosys_type_append(curves::undosys_type_register);
   BKE_undosys_type_append(pointcloud::undosys_type_register);
   BKE_undosys_type_append(ED_undosys_type_grease_pencil);
+  BKE_undosys_type_append(ED_better_timeline_undosys_type);
 
   /* Paint Modes */
   BKE_UNDOSYS_TYPE_IMAGE = BKE_undosys_type_append(ED_image_undosys_type);
