@@ -14,8 +14,15 @@ set(INC_SYS
 )
 
 set(SRC
+  better_timeline_data.cc
+  better_timeline_draw.cc
+  better_timeline_layout.cc
+  better_timeline_ops_tracks.cc
+  better_timeline_ops_view.cc
   better_timeline_types.cc
   space_better_timeline.cc
+
+  better_timeline_intern.hh
 )
 
 set(LIB

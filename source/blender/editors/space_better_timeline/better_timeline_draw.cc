@@ -1,0 +1,466 @@
+/* SPDX-FileCopyrightText: 2026 Blender Authors
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later */
+
+/** \file
+ * \ingroup editors
+ */
+
+#include <algorithm>
+
+#include "DNA_space_types.h"
+
+#include "BLI_math_base.h"
+#include "BLI_string.h"
+#include "BLI_utildefines.h"
+
+#include "BKE_context.hh"
+#include "BKE_scene.hh"
+#include "BKE_screen.hh"
+
+#include "ED_anim_api.hh"
+#include "ED_better_timeline.hh"
+#include "ED_screen.hh"
+#include "ED_time_scrub_ui.hh"
+
+#include "GPU_immediate.hh"
+#include "GPU_immediate_util.hh"
+#include "GPU_matrix.hh"
+#include "GPU_state.hh"
+
+#include "BLF_api.hh"
+
+#include "UI_interface.hh"
+#include "UI_interface_c.hh"
+#include "UI_resources.hh"
+#include "UI_view2d.hh"
+
+#include "WM_api.hh"
+#include "WM_types.hh"
+
+#include "better_timeline_intern.hh" /* own include */
+
+namespace blender {
+
+struct BetterTimelineClipState {
+  int scissor[4];
+};
+
+static BetterTimelineTrackDragVisualState g_better_timeline_track_drag_visual_state = {
+    nullptr, nullptr, -1, false};
+
+static void better_timeline_clip_begin(const ARegion *region,
+                                       const rcti &rect,
+                                       BetterTimelineClipState *r_state)
+{
+  UNUSED_VARS(region);
+  GPU_scissor_get(r_state->scissor);
+  GPU_scissor(rect.xmin, rect.ymin, BLI_rcti_size_x(&rect), BLI_rcti_size_y(&rect));
+}
+
+static void better_timeline_clip_end(const BetterTimelineClipState &state)
+{
+  GPU_scissor(UNPACK4(state.scissor));
+}
+
+static void better_timeline_view_ortho(const View2D *v2d)
+{
+  rctf curmasked = v2d->cur;
+  const int sizex = BLI_rcti_size_x(&v2d->mask);
+  const int sizey = BLI_rcti_size_y(&v2d->mask);
+  const float eps = 0.001f;
+  float xofs = 0.0f;
+  float yofs = 0.0f;
+
+  if (sizex > 0) {
+    xofs = eps * BLI_rctf_size_x(&v2d->cur) / sizex;
+  }
+  if (sizey > 0) {
+    yofs = eps * BLI_rctf_size_y(&v2d->cur) / sizey;
+  }
+
+  if (sizex > 0 && sizey > 0) {
+    const float dx = BLI_rctf_size_x(&v2d->cur) / float(sizex + 1);
+    const float dy = BLI_rctf_size_y(&v2d->cur) / float(sizey + 1);
+
+    if (v2d->mask.xmin != 0) {
+      curmasked.xmin -= dx * float(v2d->mask.xmin);
+    }
+    if (v2d->mask.xmax + 1 != v2d->winx) {
+      curmasked.xmax += dx * float(v2d->winx - v2d->mask.xmax - 1);
+    }
+
+    if (v2d->mask.ymin != 0) {
+      curmasked.ymin -= dy * float(v2d->mask.ymin);
+    }
+    if (v2d->mask.ymax + 1 != v2d->winy) {
+      curmasked.ymax += dy * float(v2d->winy - v2d->mask.ymax - 1);
+    }
+  }
+
+  BLI_rctf_translate(&curmasked, -xofs, -yofs);
+
+  if (v2d->flag & V2D_PIXELOFS_X) {
+    curmasked.xmin = floorf(curmasked.xmin) - (eps + xofs);
+    curmasked.xmax = floorf(curmasked.xmax) - (eps + xofs);
+  }
+  if (v2d->flag & V2D_PIXELOFS_Y) {
+    curmasked.ymin = floorf(curmasked.ymin) - (eps + yofs);
+    curmasked.ymax = floorf(curmasked.ymax) - (eps + yofs);
+  }
+
+  wmOrtho2(curmasked.xmin, curmasked.xmax, curmasked.ymin, curmasked.ymax);
+}
+
+static void better_timeline_draw_grid_x_frames(const View2D *v2d, const Scene *scene)
+{
+  UNUSED_VARS(scene);
+  const int pixel_width = BLI_rcti_size_x(&v2d->mask) + 1;
+  const float view_width = BLI_rctf_size_x(&v2d->cur);
+  const float pixels_per_frame = pixel_width / std::max(1.0f, view_width);
+  const float min_major_px = 35.0f;
+  const float min_minor_px = 14.0f;
+  float major_line_distance = 1.0f;
+  while ((major_line_distance * pixels_per_frame) < min_major_px) {
+    major_line_distance *= 2.0f;
+  }
+
+  auto draw_lines = [&](const float line_distance, const uchar color[3]) {
+    const float start_value = floorf(v2d->cur.xmin / line_distance) * line_distance;
+    const uint steps = uint(ceilf((v2d->cur.xmax - start_value) / line_distance)) + 1;
+
+    GPUVertFormat *format = immVertexFormat();
+    const uint pos = GPU_vertformat_attr_add(format, "pos", gpu::VertAttrType::SFLOAT_32_32);
+    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+    immUniformColor3ubv(color);
+    immBegin(GPU_PRIM_LINES, steps * 2);
+    for (uint i = 0; i < steps; i++) {
+      const float xpos = start_value + i * line_distance;
+      immVertex2f(pos, xpos, v2d->cur.ymin);
+      immVertex2f(pos, xpos, v2d->cur.ymax);
+    }
+    immEnd();
+    immUnbindProgram();
+  };
+
+  GPU_matrix_push_projection();
+  better_timeline_view_ortho(v2d);
+
+  uchar minor_color[3];
+  ui::theme::get_color_shade_3ubv(TH_GRID, 16, minor_color);
+  if ((major_line_distance * 0.5f * pixels_per_frame) >= min_minor_px && major_line_distance > 1.0f)
+  {
+    draw_lines(major_line_distance / 2.0f, minor_color);
+  }
+
+  uchar major_color[3];
+  ui::theme::get_color_3ubv(TH_GRID, major_color);
+  draw_lines(major_line_distance, major_color);
+
+  GPU_matrix_pop_projection();
+}
+
+void better_timeline_track_drag_visual_state_update(const ARegion *region,
+                                                    const BetterTimelineTrack *dragged_track,
+                                                    const int insertion_index)
+{
+  g_better_timeline_track_drag_visual_state.region = region;
+  g_better_timeline_track_drag_visual_state.dragged_track = dragged_track;
+  g_better_timeline_track_drag_visual_state.insertion_index = insertion_index;
+  g_better_timeline_track_drag_visual_state.active = true;
+}
+
+void better_timeline_track_drag_visual_state_clear()
+{
+  g_better_timeline_track_drag_visual_state.region = nullptr;
+  g_better_timeline_track_drag_visual_state.dragged_track = nullptr;
+  g_better_timeline_track_drag_visual_state.insertion_index = -1;
+  g_better_timeline_track_drag_visual_state.active = false;
+}
+
+static void better_timeline_draw_layout_overlay(const ARegion *region,
+                                                const SpaceBetterTimeline *sbetter_timeline)
+{
+  const int left_panel_width = better_timeline_left_panel_width(region, sbetter_timeline);
+  const int content_top = better_timeline_content_height(region);
+  const int track_count = better_timeline_track_count(sbetter_timeline);
+  const bool drag_active = g_better_timeline_track_drag_visual_state.active &&
+                           g_better_timeline_track_drag_visual_state.region == region;
+  const BetterTimelineTrack *dragged_track = drag_active ?
+                                                 g_better_timeline_track_drag_visual_state.dragged_track :
+                                                 nullptr;
+  const int dragged_track_index = drag_active ?
+                                      better_timeline_track_index_from_ptr(sbetter_timeline,
+                                                                           dragged_track) :
+                                      -1;
+  float drag_color[3] = {0.0f, 0.0f, 0.0f};
+  const float insertion_color[3] = {0.29f, 0.58f, 0.96f};
+  ui::theme::get_color_3fv(TH_SELECT, drag_color);
+  const rcti add_button_rect = better_timeline_add_button_rect(region, sbetter_timeline);
+  const rcti content_rect = {0, region->winx, 0, content_top};
+  int visible_separator_count = 0;
+  for (int row_index = 0; row_index <= track_count; row_index++) {
+    const float y = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+    if (y >= 0.0f && y <= content_top) {
+      visible_separator_count++;
+    }
+  }
+
+  GPU_matrix_push_projection();
+  wmOrtho2_region_pixelspace(region);
+
+  GPU_blend(GPU_BLEND_ALPHA);
+
+  GPUVertFormat *format = immVertexFormat();
+  const uint pos = GPU_vertformat_attr_add(format, "pos", gpu::VertAttrType::SFLOAT_32_32);
+  immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+
+  immUniformColor4f(0.15f, 0.15f, 0.15f, 1.0f);
+  immRectf(pos, 0.0f, 0.0f, float(left_panel_width), float(region->winy));
+
+  immUniformColor4f(0.18f, 0.18f, 0.18f, 1.0f);
+  immRectf(pos, 0.0f, float(content_top), float(left_panel_width), float(region->winy));
+
+  immUniformColor4f(0.22f, 0.22f, 0.22f, 1.0f);
+  immRectf(pos,
+           float(add_button_rect.xmin),
+           float(add_button_rect.ymin),
+           float(add_button_rect.xmax),
+           float(add_button_rect.ymax));
+
+  immUniformColor4f(0.17f, 0.17f, 0.17f, 1.0f);
+  immRectf(pos, 0.0f, 0.0f, float(left_panel_width), float(content_top));
+
+  BetterTimelineClipState content_clip_state;
+  better_timeline_clip_begin(region, content_rect, &content_clip_state);
+  for (int row_index = 0; row_index < track_count; row_index++) {
+    if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+      continue;
+    }
+    const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+    const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+
+    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    if (better_timeline_track_is_selected(track)) {
+      immUniformColor4f(0.25f, 0.40f, 0.72f, 0.92f);
+      immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
+
+      immUniformColor4f(0.25f, 0.40f, 0.72f, 0.20f);
+      immRectf(pos, float(left_panel_width), y_min, float(region->winx), y_max);
+
+      if (row_index == dragged_track_index) {
+        immUniformColor4f(drag_color[0], drag_color[1], drag_color[2], 0.14f);
+        immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
+
+        immUniformColor4f(drag_color[0], drag_color[1], drag_color[2], 0.08f);
+        immRectf(pos, float(left_panel_width), y_min, float(region->winx), y_max);
+      }
+    }
+    else {
+      /* The track list is its own opaque pane; keep the timeline content from bleeding through it.
+       */
+      immUniformColor4f(0.19f, 0.19f, 0.19f, 1.0f);
+      immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
+
+      immUniformColor4f(1.0f, 1.0f, 1.0f, 0.055f);
+      immRectf(pos, float(left_panel_width), y_min, float(region->winx), y_max);
+    }
+  }
+  better_timeline_clip_end(content_clip_state);
+
+  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.08f);
+  GPU_line_width(1.0f);
+  better_timeline_clip_begin(region, content_rect, &content_clip_state);
+  immBegin(GPU_PRIM_LINES, (visible_separator_count * 4) + 2);
+  for (int row_index = 0; row_index <= track_count; row_index++) {
+    const float y = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+    if (y < 0.0f || y > content_top) {
+      continue;
+    }
+    immVertex2f(pos, 0.0f, y);
+    immVertex2f(pos, float(left_panel_width), y);
+    immVertex2f(pos, float(left_panel_width), y);
+    immVertex2f(pos, float(region->winx), y);
+  }
+  immVertex2f(pos, float(left_panel_width), 0.0f);
+  immVertex2f(pos, float(left_panel_width), float(region->winy));
+  immEnd();
+
+  if (drag_active && dragged_track_index >= 0) {
+    const float insertion_y = better_timeline_track_insertion_y(
+        region, sbetter_timeline, g_better_timeline_track_drag_visual_state.insertion_index);
+
+    immUniformColor4f(
+        insertion_color[0], insertion_color[1], insertion_color[2], 0.95f);
+    GPU_line_width(3.0f);
+    immBegin(GPU_PRIM_LINES, 6);
+    immVertex2f(pos, 10.0f, insertion_y);
+    immVertex2f(pos, float(region->winx - 10), insertion_y);
+    immVertex2f(pos, 10.0f, insertion_y - 7.0f);
+    immVertex2f(pos, 10.0f, insertion_y + 7.0f);
+    immVertex2f(pos, float(region->winx - 10), insertion_y - 7.0f);
+    immVertex2f(pos, float(region->winx - 10), insertion_y + 7.0f);
+    immEnd();
+  }
+  better_timeline_clip_end(content_clip_state);
+
+  immUniformColor4f(0.90f, 0.90f, 0.90f, 0.95f);
+  GPU_line_width(1.5f);
+  immBegin(GPU_PRIM_LINES, 4);
+  const float button_center_x = float(add_button_rect.xmin + add_button_rect.xmax) * 0.5f;
+  const float button_center_y = float(add_button_rect.ymin + add_button_rect.ymax) * 0.5f;
+  const float plus_half_size = std::max(4.0f, float(BLI_rcti_size_x(&add_button_rect)) * 0.22f);
+  immVertex2f(pos, button_center_x - plus_half_size, button_center_y);
+  immVertex2f(pos, button_center_x + plus_half_size, button_center_y);
+  immVertex2f(pos, button_center_x, button_center_y - plus_half_size);
+  immVertex2f(pos, button_center_x, button_center_y + plus_half_size);
+  immEnd();
+
+  immUniformColor4f(0.29f, 0.58f, 0.96f, 0.9f);
+  immRectf(pos,
+           float(left_panel_width),
+           float(content_top - 2),
+           float(region->winx),
+           float(content_top));
+
+  if (better_timeline_track_scrollbar_visible(region, sbetter_timeline)) {
+    const rcti scrollbar_rect = better_timeline_track_scrollbar_rect(region, sbetter_timeline);
+    const rcti thumb_rect = better_timeline_track_scrollbar_thumb_rect(region, sbetter_timeline);
+    bTheme *btheme = ui::theme::theme_get();
+    uiWidgetColors wcol = btheme->tui.wcol_scroll;
+    const char emboss_alpha = btheme->tui.widget_emboss[3];
+    const bool scrollbar_active = false;
+
+    if (wcol.inner[3] == 0) {
+      wcol.inner[3] = 64;
+    }
+    wcol.outline[3] = 0;
+    btheme->tui.widget_emboss[3] = 0;
+    ui::draw_widget_scroll(
+        &wcol, &scrollbar_rect, &thumb_rect, scrollbar_active ? ui::SCROLL_PRESSED : 0);
+    btheme->tui.widget_emboss[3] = emboss_alpha;
+  }
+
+  immUnbindProgram();
+  GPU_blend(GPU_BLEND_NONE);
+
+  better_timeline_clip_begin(region, content_rect, &content_clip_state);
+  for (int row_index = 0; row_index < track_count; row_index++) {
+    if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+      continue;
+    }
+    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    if (track == nullptr) {
+      continue;
+    }
+    uchar text_color[4];
+    ui::theme::get_color_4ubv(better_timeline_track_is_selected(track) ? TH_HEADER_TEXT_HI :
+                                                                           TH_TEXT,
+                              text_color);
+    BLF_color4ubv(BLF_default(), text_color);
+    const float y = better_timeline_row_ymin(region, sbetter_timeline, row_index) +
+                    (BETTER_TIMELINE_ROW_HEIGHT * 0.5f) - (5.0f * UI_SCALE_FAC);
+    BLF_draw_default(16.0f * UI_SCALE_FAC, y, 0.0f, track->name, BLF_DRAW_STR_DUMMY_MAX);
+
+    const char *track_type_label = better_timeline_track_type_label_get(track);
+    if (track_type_label[0] != '\0') {
+      uchar secondary_text_color[4] = {
+          text_color[0],
+          text_color[1],
+          text_color[2],
+          static_cast<uchar>(better_timeline_track_is_selected(track) ? 180 : 128)};
+      BLF_color4ubv(BLF_default(), secondary_text_color);
+      const float label_width = BLF_width(BLF_default(),
+                                          track_type_label,
+                                          BLI_strnlen(track_type_label,
+                                                      ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX));
+      const float label_x = std::max(16.0f * UI_SCALE_FAC,
+                                     float(left_panel_width) - label_width - (16.0f * UI_SCALE_FAC));
+      BLF_draw_default(
+          label_x, y, 0.0f, track_type_label, ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX);
+    }
+  }
+  better_timeline_clip_end(content_clip_state);
+
+  GPU_matrix_pop_projection();
+}
+
+void better_timeline_main_region_draw(const bContext *C, ARegion *region)
+{
+  Scene *scene = CTX_data_scene(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first);
+  View2D *v2d = &region->v2d;
+
+  if (scene == nullptr) {
+    ui::theme::frame_buffer_clear(TH_BACK);
+    return;
+  }
+
+  better_timeline_view_sync(region, scene, sbetter_timeline);
+
+  ui::theme::frame_buffer_clear(TH_BACK);
+
+  const rcti body_rect = better_timeline_body_rect(region, sbetter_timeline);
+  const float current_frame_x = ui::view2d_view_to_region_x(v2d, BKE_scene_ctime_get(scene));
+  BetterTimelineClipState clip_state;
+  better_timeline_clip_begin(region, body_rect, &clip_state);
+  better_timeline_draw_grid_x_frames(v2d, scene);
+  better_timeline_view_ortho(v2d);
+  ANIM_draw_framerange(scene, v2d);
+  if (current_frame_x >= body_rect.xmin && current_frame_x <= body_rect.xmax) {
+    ANIM_draw_cfra(C, v2d, DRAWCFRA_WIDE);
+  }
+  ui::view2d_view_restore(C);
+  better_timeline_clip_end(clip_state);
+
+  const rcti scrub_rect = better_timeline_scrub_rect(region, sbetter_timeline);
+  better_timeline_clip_begin(region, scrub_rect, &clip_state);
+  ED_time_scrub_draw(region, scene, false, true, round_db_to_int(scene->frames_per_second()));
+  better_timeline_clip_end(clip_state);
+  better_timeline_draw_layout_overlay(region, sbetter_timeline);
+}
+
+void better_timeline_main_region_draw_overlay(const bContext *C, ARegion *region)
+{
+  const Scene *scene = CTX_data_scene(C);
+  if (scene == nullptr) {
+    return;
+  }
+
+  /* Keep the scrub overlay in sync with the latest region dimensions during live resize. */
+  const auto *sbetter_timeline = static_cast<const SpaceBetterTimeline *>(
+      CTX_wm_area(C)->spacedata.first);
+  better_timeline_view_sync(region, scene, sbetter_timeline);
+  const rcti scrub_rect = better_timeline_scrub_rect(region, sbetter_timeline);
+  const float current_frame_x = ui::view2d_view_to_region_x(&region->v2d, BKE_scene_ctime_get(scene));
+  BetterTimelineClipState clip_state;
+  if (current_frame_x >= scrub_rect.xmin && current_frame_x <= scrub_rect.xmax) {
+    better_timeline_clip_begin(region, scrub_rect, &clip_state);
+    ED_time_scrub_draw_current_frame(region, scene, false, false);
+    better_timeline_clip_end(clip_state);
+  }
+}
+
+void better_timeline_main_region_listener(const wmRegionListenerParams *params)
+{
+  ARegion *region = params->region;
+  const wmNotifier *wmn = params->notifier;
+
+  switch (wmn->category) {
+    case NC_SCENE:
+      if (ELEM(wmn->data, ND_FRAME, ND_FRAME_RANGE)) {
+        ED_region_tag_redraw(region);
+      }
+      break;
+    case NC_SCREEN:
+      if (wmn->data == ND_ANIMPLAY) {
+        ED_region_tag_redraw(region);
+      }
+      break;
+    case NC_SPACE:
+      ED_region_tag_redraw(region);
+      break;
+  }
+}
+
+}  // namespace blender

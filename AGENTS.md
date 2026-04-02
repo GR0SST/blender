@@ -115,5 +115,15 @@ Likely future touchpoints for Better Timeline work:
 - Add addon-visible typed behavior in `rna_ui.cc` if Better Timeline types need richer registration callbacks later.
 - If the editor needs theme-specific colors later, review `source/blender/editors/interface/resources.cc`.
 
+Code organization rules for future Better Timeline work:
+- Do not keep growing `source/blender/editors/space_better_timeline/space_better_timeline.cc` as a catch-all file.
+- New Better Timeline features should default to a modular file layout in the same folder, following the patterns used by other Blender editor modules such as separate `*_ops.cc`, `*_draw.cc`, `*_utils.cc`, or other focused sibling files when responsibilities are distinct.
+- Keep `space_better_timeline.cc` focused on editor/space registration, region setup, top-level lifecycle hooks, and only the glue needed to wire Better Timeline submodules together.
+- Put substantial operator implementations, drawing code, data/serialization helpers, and interaction helpers into dedicated sibling translation units instead of appending more large sections to `space_better_timeline.cc`.
+- When adding a new Better Timeline subsystem, prefer introducing a narrowly scoped sibling file immediately rather than waiting for another monolithic refactor later.
+
 Working assumption for future changes:
 - New timeline-specific UI and behavior should prefer extending `Better Timeline` instead of modifying the stock Dope Sheet/Timeline mode unless there is a clear compatibility reason.
+- Do not keep accumulating major Better Timeline logic in `source/blender/editors/space_better_timeline/space_better_timeline.cc`.
+- Prefer a modular Blender-style split with sibling `.cc` files grouped by responsibility, for example space/bootstrap, draw, operators/interactions, and shared internal helpers/types.
+- When adding substantial new Better Timeline behavior, first place it in the appropriate module or create a new focused sibling file instead of extending the monolith further.
