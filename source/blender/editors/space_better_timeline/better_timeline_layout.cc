@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
@@ -373,6 +374,61 @@ static bool better_timeline_reorder_track_to_index(SpaceBetterTimeline *sbetter_
   BLI_remlink(&sbetter_timeline->tracks, track);
   BLI_insertlinkafter(&sbetter_timeline->tracks, insert_after, track);
   return true;
+}
+
+bool better_timeline_reorder_selected_tracks_would_change(
+    const SpaceBetterTimeline *sbetter_timeline, const int insertion_index)
+{
+  const int track_count = better_timeline_track_count(sbetter_timeline);
+  const int selected_track_count = better_timeline_selected_track_count(sbetter_timeline);
+  if (sbetter_timeline == nullptr || track_count < 2 || selected_track_count < 1) {
+    return false;
+  }
+
+  std::vector<const BetterTimelineTrack *> original_order;
+  std::vector<const BetterTimelineTrack *> reordered;
+  std::vector<const BetterTimelineTrack *> selected_tracks;
+  std::vector<const BetterTimelineTrack *> unselected_tracks;
+  original_order.reserve(track_count);
+  reordered.reserve(track_count);
+  selected_tracks.reserve(selected_track_count);
+  unselected_tracks.reserve(track_count - selected_track_count);
+
+  int selected_before_insertion = 0;
+  int index = 0;
+  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
+           sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next, index++)
+  {
+    original_order.push_back(track);
+    if (index < insertion_index && better_timeline_track_is_selected(track)) {
+      selected_before_insertion++;
+    }
+    if (better_timeline_track_is_selected(track)) {
+      selected_tracks.push_back(track);
+    }
+    else {
+      unselected_tracks.push_back(track);
+    }
+  }
+
+  if (selected_tracks.empty()) {
+    return false;
+  }
+
+  const int adjusted_insertion_index = std::clamp(
+      insertion_index - selected_before_insertion, 0, int(unselected_tracks.size()));
+
+  reordered.insert(reordered.end(),
+                   unselected_tracks.begin(),
+                   unselected_tracks.begin() + adjusted_insertion_index);
+  reordered.insert(reordered.end(), selected_tracks.begin(), selected_tracks.end());
+  reordered.insert(reordered.end(),
+                   unselected_tracks.begin() + adjusted_insertion_index,
+                   unselected_tracks.end());
+
+  return reordered != original_order;
 }
 
 bool better_timeline_reorder_selected_tracks_to_insertion_index(

@@ -21,6 +21,7 @@
 
 #include "ED_better_timeline.hh"
 #include "ED_screen.hh"
+#include "ED_undo.hh"
 
 #include "RNA_access.hh"
 #include "RNA_define.hh"
@@ -35,6 +36,18 @@
 #include "better_timeline_intern.hh" /* own include */
 
 namespace blender {
+
+static ListBase g_better_timeline_track_clipboard = {nullptr, nullptr};
+
+static void better_timeline_undo_push_init(bContext *C, const char *name)
+{
+  wmWindowManager *wm = CTX_wm_manager(C);
+  if (wm == nullptr || wm->runtime->undo_stack == nullptr || wm->op_undo_depth > 1) {
+    return;
+  }
+
+  BKE_undosys_step_push_init(wm->runtime->undo_stack, C, name);
+}
 
 static void better_timeline_tag_space_state_changed(bContext *C)
 {
@@ -56,6 +69,33 @@ static void better_timeline_sync_active_track_index(SpaceBetterTimeline *sbetter
                                                                                 active_track);
 }
 
+static BetterTimelineTrack *better_timeline_track_with_selected_clip_get(
+    SpaceBetterTimeline *sbetter_timeline)
+{
+  if (sbetter_timeline == nullptr) {
+    return nullptr;
+  }
+
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first); clip != nullptr;
+         clip = clip->next)
+    {
+      if (better_timeline_clip_is_selected(clip)) {
+        return track;
+      }
+    }
+  }
+  return nullptr;
+}
+
+static void better_timeline_track_clipboard_clear()
+{
+  better_timeline_tracks_free(&g_better_timeline_track_clipboard);
+}
+
 static bool better_timeline_track_select_poll(bContext *C)
 {
   return better_timeline_operator_region_poll(C);
@@ -72,6 +112,11 @@ static wmOperatorStatus better_timeline_track_select_invoke(bContext *C,
   if (better_timeline_scrub_event_in_region(area, region, event)) {
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
   }
+  if (better_timeline_clip_from_region_position(
+          region, sbetter_timeline, event->mval[0], event->mval[1], nullptr) != nullptr)
+  {
+    return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
+  }
   if (better_timeline_is_in_add_button(region, sbetter_timeline, event->mval[0], event->mval[1])) {
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
   }
@@ -86,10 +131,20 @@ static wmOperatorStatus better_timeline_track_select_invoke(bContext *C,
   const bool allow_track_reorder_gesture = !shift && !oskey;
 
   if (clicked_track_index < 0) {
-    if (!shift && !oskey && better_timeline_has_selected_track(sbetter_timeline)) {
-      better_timeline_clear_selection(sbetter_timeline);
-      ED_area_tag_redraw(area);
-      return OPERATOR_FINISHED;
+    if (!shift && !oskey) {
+      if (!better_timeline_is_in_track_list_pane(region, sbetter_timeline, event->mval[0]) &&
+          better_timeline_has_selected_clip(sbetter_timeline))
+      {
+        better_timeline_clear_clip_selection(sbetter_timeline);
+        ED_area_tag_redraw(area);
+        return OPERATOR_FINISHED;
+      }
+      if (better_timeline_has_selected_track(sbetter_timeline)) {
+        better_timeline_clear_selection(sbetter_timeline);
+        better_timeline_clear_clip_selection(sbetter_timeline);
+        ED_area_tag_redraw(area);
+        return OPERATOR_FINISHED;
+      }
     }
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
   }
@@ -137,7 +192,8 @@ static wmOperatorStatus better_timeline_track_select_invoke(bContext *C,
 
     const bool already_only_selected = better_timeline_track_is_selected(clicked_track) &&
                                        selected_track_count == 1 &&
-                                       sbetter_timeline->selected_track_index == clicked_track_index;
+                                       sbetter_timeline->selected_track_index == clicked_track_index &&
+                                       !better_timeline_has_selected_clip(sbetter_timeline);
     if (already_only_selected) {
       return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
     }
@@ -147,6 +203,7 @@ static wmOperatorStatus better_timeline_track_select_invoke(bContext *C,
     }
 
     better_timeline_select_only_track(sbetter_timeline, clicked_track_index);
+    better_timeline_clear_clip_selection(sbetter_timeline);
   }
 
   ED_area_tag_redraw(area);
@@ -243,9 +300,12 @@ static wmOperatorStatus better_timeline_track_reorder_modal(bContext *C,
       if (event->val == KM_RELEASE) {
         if (better_timeline_track_index_from_ptr(sbetter_timeline, reorder_data->dragged_track) >= 0)
         {
-          const bool changed = better_timeline_reorder_selected_tracks_to_insertion_index(
+          const bool changed = better_timeline_reorder_selected_tracks_would_change(
               sbetter_timeline, reorder_data->current_insertion_index);
           if (changed) {
+            better_timeline_undo_push_init(C, op->type->name);
+            better_timeline_reorder_selected_tracks_to_insertion_index(
+                sbetter_timeline, reorder_data->current_insertion_index);
             better_timeline_tag_space_state_changed(C);
           }
         }
@@ -279,6 +339,8 @@ static wmOperatorStatus better_timeline_track_reorder_invoke(bContext *C,
   WM_event_drag_start_mval(event, region, drag_start_mval);
 
   if (better_timeline_scrub_event_in_region(area, region, event) ||
+      better_timeline_clip_from_region_position(
+          region, sbetter_timeline, drag_start_mval[0], drag_start_mval[1], nullptr) != nullptr ||
       better_timeline_is_in_add_button(
           region, sbetter_timeline, drag_start_mval[0], drag_start_mval[1]) ||
       better_timeline_is_on_panel_divider(region, sbetter_timeline, drag_start_mval[0]) ||
@@ -363,6 +425,7 @@ static wmOperatorStatus better_timeline_add_track_exec(bContext *C, wmOperator *
     return OPERATOR_CANCELLED;
   }
 
+  better_timeline_undo_push_init(C, op->type->name);
   BetterTimelineTrack *track = better_timeline_track_create(track_type->idname,
                                                             sbetter_timeline->next_track_name_index);
   BLI_addtail(&sbetter_timeline->tracks, track);
@@ -388,7 +451,19 @@ static wmOperatorStatus better_timeline_add_track_invoke(bContext *C,
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
   }
 
-  return better_timeline_add_track_exec(C, op);
+  ui::PopupMenu *pup = ui::popup_menu_begin(C, "Add Track", ICON_NONE);
+  ui::Layout &layout = *popup_menu_layout(pup);
+  ed::better_timeline::foreach_track_type(
+      [&](const ed::better_timeline::BetterTimelineTrackType &track_type) {
+        PointerRNA op_ptr = layout.op("BETTER_TIMELINE_OT_add_track",
+                                      track_type.label[0] != '\0' ? track_type.label :
+                                                                    track_type.idname,
+                                      ICON_NONE);
+        RNA_string_set(&op_ptr, "track_type", track_type.idname);
+      });
+  popup_menu_end(C, pup);
+  UNUSED_VARS(op);
+  return OPERATOR_INTERFACE;
 }
 
 static void BETTER_TIMELINE_OT_add_track(wmOperatorType *ot)
@@ -421,8 +496,73 @@ static wmOperatorStatus better_timeline_add_track_menu_invoke(bContext *C,
                                                               const wmEvent * /*event*/)
 {
   const auto *sbetter_timeline = static_cast<const SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first);
+  if (better_timeline_has_selected_clip(sbetter_timeline)) {
+    const BetterTimelineTrack *track = better_timeline_track_with_selected_clip_get(
+        const_cast<SpaceBetterTimeline *>(sbetter_timeline));
+    if (track == nullptr) {
+      return OPERATOR_CANCELLED;
+    }
+
+    const ed::better_timeline::BetterTimelineTrackType *track_type =
+        ed::better_timeline::track_type_find_from_idname(track->track_type);
+    if (track_type == nullptr) {
+      return OPERATOR_CANCELLED;
+    }
+
+    const Vector<const ed::better_timeline::BetterTimelineClipType *> clip_types =
+        ed::better_timeline::compatible_clip_types(*track_type);
+    if (clip_types.is_empty()) {
+      return OPERATOR_CANCELLED;
+    }
+
+    ui::PopupMenu *pup = ui::popup_menu_begin(C, "Add Clip", ICON_NONE);
+    ui::Layout &layout = *popup_menu_layout(pup);
+    for (const ed::better_timeline::BetterTimelineClipType *clip_type : clip_types) {
+      PointerRNA op_ptr = layout.op("BETTER_TIMELINE_OT_add_clip",
+                                    clip_type->label[0] != '\0' ? clip_type->label :
+                                                                  clip_type->idname,
+                                    ICON_NONE);
+      RNA_string_set(&op_ptr, "clip_type", clip_type->idname);
+    }
+    popup_menu_end(C, pup);
+    return OPERATOR_INTERFACE;
+  }
+
   if (better_timeline_has_selected_track(sbetter_timeline)) {
-    return OPERATOR_CANCELLED;
+    const BetterTimelineTrack *track = better_timeline_track_at_index(
+        sbetter_timeline, sbetter_timeline->selected_track_index);
+    if (track == nullptr || !better_timeline_track_is_selected(track)) {
+      track = better_timeline_track_at_index(sbetter_timeline,
+                                             better_timeline_first_selected_track_index(
+                                                 sbetter_timeline));
+    }
+    if (track == nullptr) {
+      return OPERATOR_CANCELLED;
+    }
+
+    const ed::better_timeline::BetterTimelineTrackType *track_type =
+        ed::better_timeline::track_type_find_from_idname(track->track_type);
+    if (track_type == nullptr) {
+      return OPERATOR_CANCELLED;
+    }
+
+    const Vector<const ed::better_timeline::BetterTimelineClipType *> clip_types =
+        ed::better_timeline::compatible_clip_types(*track_type);
+    if (clip_types.is_empty()) {
+      return OPERATOR_CANCELLED;
+    }
+
+    ui::PopupMenu *pup = ui::popup_menu_begin(C, "Add Clip", ICON_NONE);
+    ui::Layout &layout = *popup_menu_layout(pup);
+    for (const ed::better_timeline::BetterTimelineClipType *clip_type : clip_types) {
+      PointerRNA op_ptr = layout.op("BETTER_TIMELINE_OT_add_clip",
+                                    clip_type->label[0] != '\0' ? clip_type->label :
+                                                                  clip_type->idname,
+                                    ICON_NONE);
+      RNA_string_set(&op_ptr, "clip_type", clip_type->idname);
+    }
+    popup_menu_end(C, pup);
+    return OPERATOR_INTERFACE;
   }
 
   ui::PopupMenu *pup = ui::popup_menu_begin(C, "Add Track", ICON_NONE);
@@ -451,6 +591,177 @@ static void BETTER_TIMELINE_OT_add_track_menu(wmOperatorType *ot)
   ot->flag = OPTYPE_INTERNAL;
 }
 
+static bool better_timeline_duplicate_track_poll(bContext *C)
+{
+  if (!better_timeline_track_select_poll(C)) {
+    return false;
+  }
+  const auto *sbetter_timeline = static_cast<const SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first);
+  return !better_timeline_has_selected_clip(sbetter_timeline) &&
+         better_timeline_has_selected_track(sbetter_timeline);
+}
+
+static wmOperatorStatus better_timeline_duplicate_track_exec(bContext *C, wmOperator *op)
+{
+  ScrArea *area = CTX_wm_area(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+
+  Vector<BetterTimelineTrack *> selected_tracks;
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (better_timeline_track_is_selected(track)) {
+      selected_tracks.append(track);
+    }
+  }
+  if (selected_tracks.is_empty()) {
+    return OPERATOR_CANCELLED;
+  }
+
+  better_timeline_undo_push_init(C, op->type->name);
+  better_timeline_clear_selection(sbetter_timeline);
+  better_timeline_clear_clip_selection(sbetter_timeline);
+
+  BetterTimelineTrack *last_duplicate = nullptr;
+  for (BetterTimelineTrack *source_track : selected_tracks) {
+    BetterTimelineTrack *duplicated_track = better_timeline_track_duplicate(source_track);
+    if (duplicated_track == nullptr) {
+      continue;
+    }
+    better_timeline_track_assign_duplicate_name(sbetter_timeline, duplicated_track, source_track->name);
+    better_timeline_track_set_selected(duplicated_track, true);
+    BLI_insertlinkafter(&sbetter_timeline->tracks, source_track, duplicated_track);
+    last_duplicate = duplicated_track;
+  }
+
+  if (last_duplicate == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  better_timeline_sync_active_track_index(sbetter_timeline, last_duplicate);
+  better_timeline_tag_space_state_changed(C);
+  ED_area_tag_redraw(area);
+  return OPERATOR_FINISHED;
+}
+
+static void BETTER_TIMELINE_OT_duplicate_track(wmOperatorType *ot)
+{
+  ot->name = "Duplicate Better Timeline Track";
+  ot->idname = "BETTER_TIMELINE_OT_duplicate_track";
+  ot->description = "Duplicate selected Better Timeline tracks below the originals";
+
+  ot->exec = better_timeline_duplicate_track_exec;
+  ot->poll = better_timeline_duplicate_track_poll;
+
+  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
+}
+
+static bool better_timeline_copy_track_poll(bContext *C)
+{
+  return better_timeline_duplicate_track_poll(C);
+}
+
+static wmOperatorStatus better_timeline_copy_track_exec(bContext *C, wmOperator * /*op*/)
+{
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first);
+  better_timeline_track_clipboard_clear();
+
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (!better_timeline_track_is_selected(track)) {
+      continue;
+    }
+    if (BetterTimelineTrack *clipboard_track = better_timeline_track_duplicate(track)) {
+      BLI_addtail(&g_better_timeline_track_clipboard, clipboard_track);
+    }
+  }
+
+  return BLI_listbase_is_empty(&g_better_timeline_track_clipboard) ? OPERATOR_CANCELLED :
+                                                                     OPERATOR_FINISHED;
+}
+
+static void BETTER_TIMELINE_OT_copy_track(wmOperatorType *ot)
+{
+  ot->name = "Copy Better Timeline Track";
+  ot->idname = "BETTER_TIMELINE_OT_copy_track";
+  ot->description = "Copy selected Better Timeline tracks";
+
+  ot->exec = better_timeline_copy_track_exec;
+  ot->poll = better_timeline_copy_track_poll;
+
+  ot->flag = OPTYPE_INTERNAL;
+}
+
+static bool better_timeline_paste_track_poll(bContext *C)
+{
+  if (!better_timeline_track_select_poll(C) || BLI_listbase_is_empty(&g_better_timeline_track_clipboard)) {
+    return false;
+  }
+  const auto *sbetter_timeline = static_cast<const SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first);
+  return !better_timeline_has_selected_clip(sbetter_timeline);
+}
+
+static wmOperatorStatus better_timeline_paste_track_exec(bContext *C, wmOperator *op)
+{
+  ScrArea *area = CTX_wm_area(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+  BetterTimelineTrack *insert_after = better_timeline_track_at_index(
+      sbetter_timeline, sbetter_timeline->selected_track_index);
+  if (insert_after == nullptr) {
+    insert_after = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.last);
+  }
+
+  better_timeline_undo_push_init(C, op->type->name);
+  better_timeline_clear_selection(sbetter_timeline);
+  better_timeline_clear_clip_selection(sbetter_timeline);
+
+  BetterTimelineTrack *last_inserted = insert_after;
+  BetterTimelineTrack *last_pasted_track = nullptr;
+  for (BetterTimelineTrack *clipboard_track = static_cast<BetterTimelineTrack *>(g_better_timeline_track_clipboard.first);
+       clipboard_track != nullptr;
+       clipboard_track = clipboard_track->next)
+  {
+    BetterTimelineTrack *pasted_track = better_timeline_track_duplicate(clipboard_track);
+    if (pasted_track == nullptr) {
+      continue;
+    }
+    better_timeline_track_assign_duplicate_name(sbetter_timeline, pasted_track, clipboard_track->name);
+    better_timeline_track_set_selected(pasted_track, true);
+    if (last_inserted != nullptr) {
+      BLI_insertlinkafter(&sbetter_timeline->tracks, last_inserted, pasted_track);
+    }
+    else {
+      BLI_addhead(&sbetter_timeline->tracks, pasted_track);
+    }
+    last_inserted = pasted_track;
+    last_pasted_track = pasted_track;
+  }
+
+  if (last_pasted_track == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  better_timeline_sync_active_track_index(sbetter_timeline, last_pasted_track);
+  better_timeline_tag_space_state_changed(C);
+  ED_area_tag_redraw(area);
+  return OPERATOR_FINISHED;
+}
+
+static void BETTER_TIMELINE_OT_paste_track(wmOperatorType *ot)
+{
+  ot->name = "Paste Better Timeline Track";
+  ot->idname = "BETTER_TIMELINE_OT_paste_track";
+  ot->description = "Paste copied Better Timeline tracks";
+
+  ot->exec = better_timeline_paste_track_exec;
+  ot->poll = better_timeline_paste_track_poll;
+
+  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
+}
+
 static bool better_timeline_track_requires_delete_confirm(
     const SpaceBetterTimeline *sbetter_timeline)
 {
@@ -470,7 +781,7 @@ static bool better_timeline_track_requires_delete_confirm(
   return false;
 }
 
-static wmOperatorStatus better_timeline_delete_track_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus better_timeline_delete_track_exec(bContext *C, wmOperator *op)
 {
   ScrArea *area = CTX_wm_area(C);
   ARegion *region = CTX_wm_region(C);
@@ -480,6 +791,7 @@ static wmOperatorStatus better_timeline_delete_track_exec(bContext *C, wmOperato
     return OPERATOR_CANCELLED;
   }
 
+  better_timeline_undo_push_init(C, op->type->name);
   BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
   while (track != nullptr) {
     BetterTimelineTrack *track_next = track->next;
@@ -557,7 +869,8 @@ static bool better_timeline_clear_selection_poll(bContext *C)
 
   const ScrArea *area = CTX_wm_area(C);
   const auto *sbetter_timeline = static_cast<const SpaceBetterTimeline *>(area->spacedata.first);
-  return better_timeline_has_selected_track(sbetter_timeline);
+  return better_timeline_has_selected_track(sbetter_timeline) ||
+         better_timeline_has_selected_clip(sbetter_timeline);
 }
 
 static wmOperatorStatus better_timeline_clear_selection_exec(bContext *C, wmOperator * /*op*/)
@@ -566,6 +879,7 @@ static wmOperatorStatus better_timeline_clear_selection_exec(bContext *C, wmOper
   auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
 
   better_timeline_clear_selection(sbetter_timeline);
+  better_timeline_clear_clip_selection(sbetter_timeline);
   ED_area_tag_redraw(area);
   return OPERATOR_FINISHED;
 }
@@ -574,7 +888,7 @@ static void BETTER_TIMELINE_OT_clear_selection(wmOperatorType *ot)
 {
   ot->name = "Clear Better Timeline Selection";
   ot->idname = "BETTER_TIMELINE_OT_clear_selection";
-  ot->description = "Clear selected tracks in Better Timeline";
+  ot->description = "Clear selected tracks and clips in Better Timeline";
 
   ot->exec = better_timeline_clear_selection_exec;
   ot->poll = better_timeline_clear_selection_poll;
@@ -590,6 +904,13 @@ void better_timeline_track_ops_register()
   WM_operatortype_append(BETTER_TIMELINE_OT_clear_selection);
   WM_operatortype_append(BETTER_TIMELINE_OT_track_select);
   WM_operatortype_append(BETTER_TIMELINE_OT_track_reorder);
+}
+
+void better_timeline_clipboard_track_ops_register()
+{
+  WM_operatortype_append(BETTER_TIMELINE_OT_duplicate_track);
+  WM_operatortype_append(BETTER_TIMELINE_OT_copy_track);
+  WM_operatortype_append(BETTER_TIMELINE_OT_paste_track);
 }
 
 }  // namespace blender

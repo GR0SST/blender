@@ -11,6 +11,9 @@
 #include "DNA_listBase.h"
 
 #include "BLI_rect.h"
+#include "BLI_span.hh"
+#include "BLI_string_ref.hh"
+#include "BLI_vector.hh"
 
 #include "BKE_undo_system.hh"
 
@@ -73,14 +76,56 @@ struct BetterTimelineTrackDragVisualState {
   bool active;
 };
 
-struct BetterTimelineUndoStep {
-  UndoStep step;
-  SpaceBetterTimeline *space;
+struct BetterTimelineClipDragVisualState {
+  const ARegion *region;
+  const BetterTimelineTrack *source_track;
+  const BetterTimelineTrack *target_track;
+  const BetterTimelineClip *dragged_clip;
+  Vector<const BetterTimelineClip *> moved_clips;
+  Vector<const BetterTimelineTrack *> moved_clip_tracks;
+  float preview_start_frame;
+  float preview_end_frame;
+  bool drop_valid;
+  bool active;
+};
+
+struct BetterTimelineMovedClipState {
+  BetterTimelineTrack *source_track;
+  BetterTimelineClip *clip;
+  float initial_start_frame;
+  float initial_end_frame;
+};
+
+struct BetterTimelineUndoState {
   ListBase tracks;
   int selected_track_index;
+  int selected_clip_index;
   int next_track_name_index;
   int track_panel_width;
   int track_scroll_offset;
+};
+
+struct BetterTimelineClipDragData {
+  BetterTimelineTrack *source_track;
+  BetterTimelineTrack *target_track;
+  BetterTimelineClip *clip;
+  Vector<BetterTimelineMovedClipState> moved_clips;
+  float initial_start_frame;
+  float initial_end_frame;
+  float mouse_start_frame;
+  float preview_start_frame;
+  float preview_end_frame;
+  bool drop_valid;
+  bool allow_track_change;
+  bool remove_on_cancel;
+  int last_mouse_y;
+};
+
+struct BetterTimelineUndoStep {
+  UndoStep step;
+  SpaceBetterTimeline *space;
+  BetterTimelineUndoState state_before;
+  BetterTimelineUndoState state_after;
 };
 
 enum eBetterTimelineTrackScrollDirection {
@@ -145,6 +190,8 @@ int better_timeline_track_from_region_y(const ARegion *region,
 int better_timeline_track_insertion_index_from_region_y(const ARegion *region,
                                                         const SpaceBetterTimeline *sbetter_timeline,
                                                         int region_y);
+bool better_timeline_reorder_selected_tracks_would_change(
+    const SpaceBetterTimeline *sbetter_timeline, int insertion_index);
 bool better_timeline_reorder_selected_tracks_to_insertion_index(
     SpaceBetterTimeline *sbetter_timeline, int insertion_index);
 bool better_timeline_track_reorder_autoscroll_apply(
@@ -156,10 +203,24 @@ void better_timeline_track_drag_visual_state_update(const ARegion *region,
                                                     const BetterTimelineTrack *dragged_track,
                                                     int insertion_index);
 void better_timeline_track_drag_visual_state_clear();
+void better_timeline_clip_drag_visual_state_update(const ARegion *region,
+                                                   const BetterTimelineTrack *source_track,
+                                                   const BetterTimelineTrack *target_track,
+                                                   const BetterTimelineClip *dragged_clip,
+                                                   Span<const BetterTimelineClip *> moved_clips,
+                                                   Span<const BetterTimelineTrack *> moved_clip_tracks,
+                                                   float preview_start_frame,
+                                                   float preview_end_frame,
+                                                   bool drop_valid);
+void better_timeline_clip_drag_visual_state_clear();
+bool better_timeline_clip_drag_visual_state_is_dragged_clip(const BetterTimelineClip *clip);
 bool better_timeline_operator_region_poll(bContext *C);
 void better_timeline_view_ops_register();
 void better_timeline_main_region_keymap_init(wmWindowManager *wm, ARegion *region);
 void better_timeline_track_ops_register();
+void better_timeline_clip_ops_register();
+void better_timeline_clipboard_track_ops_register();
+void better_timeline_clipboard_clip_ops_register();
 void better_timeline_main_region_draw(const bContext *C, ARegion *region);
 void better_timeline_main_region_draw_overlay(const bContext *C, ARegion *region);
 void better_timeline_main_region_listener(const wmRegionListenerParams *params);
@@ -174,17 +235,65 @@ int better_timeline_track_count(const SpaceBetterTimeline *sbetter_timeline);
 int better_timeline_track_index_from_ptr(const SpaceBetterTimeline *sbetter_timeline,
                                          const BetterTimelineTrack *target_track);
 BetterTimelineTrack *better_timeline_track_create(const char *track_type_idname, int track_name_index);
+BetterTimelineTrack *better_timeline_track_duplicate(const BetterTimelineTrack *track_src);
 void better_timeline_track_free(BetterTimelineTrack *track);
 void better_timeline_tracks_free(ListBase *tracks);
 void better_timeline_tracks_duplicate(ListBase *dst, const ListBase *src);
+void better_timeline_track_assign_duplicate_name(const SpaceBetterTimeline *sbetter_timeline,
+                                                 BetterTimelineTrack *track,
+                                                 StringRef source_name);
 const char *better_timeline_track_type_label_get(const BetterTimelineTrack *track);
 void better_timeline_track_ensure_type(BetterTimelineTrack *track);
+BetterTimelineClip *better_timeline_clip_create(const BetterTimelineTrack *track,
+                                                const char *clip_type_idname,
+                                                float start_frame,
+                                                float end_frame);
+BetterTimelineClip *better_timeline_clip_duplicate(const BetterTimelineClip *clip_src);
+void better_timeline_clip_assign_duplicate_name(const SpaceBetterTimeline *sbetter_timeline,
+                                                BetterTimelineClip *clip,
+                                                StringRef source_name);
+bool better_timeline_clip_range_overlaps(float start_frame_a,
+                                         float end_frame_a,
+                                         float start_frame_b,
+                                         float end_frame_b);
+bool better_timeline_track_can_place_clip(
+    const BetterTimelineTrack *track,
+    StringRef clip_type_idname,
+    float start_frame,
+    float end_frame,
+    const BetterTimelineClip *ignore_clip = nullptr,
+    Span<const BetterTimelineClip *> ignored_clips = {});
+const BetterTimelineClip *better_timeline_clip_covering_frame(const BetterTimelineTrack *track,
+                                                              float frame,
+                                                              StringRef clip_type_idname);
+float better_timeline_clip_creation_start_frame(const BetterTimelineTrack *track,
+                                                StringRef clip_type_idname,
+                                                float requested_start_frame,
+                                                float duration_frames);
+const char *better_timeline_clip_type_label_get(const BetterTimelineClip *clip);
+bool better_timeline_clip_is_selected(const BetterTimelineClip *clip);
+void better_timeline_clip_set_selected(BetterTimelineClip *clip, bool selected);
 void better_timeline_clip_ensure_type(BetterTimelineTrack *track, BetterTimelineClip *clip);
 bool better_timeline_has_selected_track(const SpaceBetterTimeline *sbetter_timeline);
 int better_timeline_selected_track_count(const SpaceBetterTimeline *sbetter_timeline);
 void better_timeline_clear_selection(SpaceBetterTimeline *sbetter_timeline);
 void better_timeline_select_only_track(SpaceBetterTimeline *sbetter_timeline, int track_index);
 int better_timeline_first_selected_track_index(const SpaceBetterTimeline *sbetter_timeline);
+bool better_timeline_has_selected_clip(const SpaceBetterTimeline *sbetter_timeline);
+void better_timeline_clear_clip_selection(SpaceBetterTimeline *sbetter_timeline);
+int better_timeline_first_selected_clip_index(const SpaceBetterTimeline *sbetter_timeline);
+int better_timeline_clip_global_index_from_ptr(const SpaceBetterTimeline *sbetter_timeline,
+                                               const BetterTimelineTrack *track,
+                                               const BetterTimelineClip *clip);
+BetterTimelineClip *better_timeline_clip_at_global_index(SpaceBetterTimeline *sbetter_timeline,
+                                                         int clip_index,
+                                                         BetterTimelineTrack **r_track);
+BetterTimelineClip *better_timeline_clip_from_region_position(
+    const ARegion *region,
+    SpaceBetterTimeline *sbetter_timeline,
+    int region_x,
+    int region_y,
+    BetterTimelineTrack **r_track);
 void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl);
 void better_timeline_space_blend_write(BlendWriter *writer, SpaceLink *sl);
 

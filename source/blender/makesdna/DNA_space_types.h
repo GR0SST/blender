@@ -1061,7 +1061,8 @@ struct BetterTimelineClip {
 
   char name[64] = "";
   char clip_type[64] = "";
-  char _pad0[8] = {};
+  char selected = 0;
+  char _pad0[7] = {};
 
   float start_frame = 0.0f;
   float end_frame = 0.0f;
@@ -1092,9 +1093,11 @@ struct SpaceBetterTimeline {
 
   ListBaseT<BetterTimelineTrack> tracks = {nullptr, nullptr};
   int selected_track_index = -1;
+  int selected_clip_index = -1;
   int next_track_name_index = 1;
   int track_panel_width = 0;
   int track_scroll_offset = 0;
+  int _pad1 = 0;
 };
 
 /** \} */

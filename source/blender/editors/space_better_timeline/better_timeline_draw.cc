@@ -7,6 +7,7 @@
  */
 
 #include <algorithm>
+#include <cmath>
 
 #include "DNA_space_types.h"
 
@@ -48,6 +49,8 @@ struct BetterTimelineClipState {
 
 static BetterTimelineTrackDragVisualState g_better_timeline_track_drag_visual_state = {
     nullptr, nullptr, -1, false};
+static BetterTimelineClipDragVisualState g_better_timeline_clip_drag_visual_state = {
+    nullptr, nullptr, nullptr, nullptr, {}, {}, 0.0f, 0.0f, false, false};
 
 static void better_timeline_clip_begin(const ARegion *region,
                                        const rcti &rect,
@@ -158,6 +161,573 @@ static void better_timeline_draw_grid_x_frames(const View2D *v2d, const Scene *s
   draw_lines(major_line_distance, major_color);
 
   GPU_matrix_pop_projection();
+}
+
+static void better_timeline_clip_color_get(const BetterTimelineClip *clip, float color[4])
+{
+  color[0] = 0.38f;
+  color[1] = 0.51f;
+  color[2] = 0.68f;
+  color[3] = 0.95f;
+
+  if (clip == nullptr) {
+    return;
+  }
+
+  if (STREQ(clip->clip_type, "BETTER_TIMELINE_CT_TEST")) {
+    color[0] = 0.38f;
+    color[1] = 0.51f;
+    color[2] = 0.68f;
+  }
+  else if (STREQ(clip->clip_type, "BETTER_TIMELINE_CT_ANIMATION")) {
+    color[0] = 0.35f;
+    color[1] = 0.62f;
+    color[2] = 0.43f;
+  }
+  else if (STREQ(clip->clip_type, "BETTER_TIMELINE_CT_SPLINE")) {
+    color[0] = 0.78f;
+    color[1] = 0.52f;
+    color[2] = 0.28f;
+  }
+
+  if (better_timeline_clip_is_selected(clip)) {
+    color[3] = 1.0f;
+  }
+}
+
+static void better_timeline_clip_rect_pixel_snap(float *r_start_x,
+                                                 float *r_end_x,
+                                                 float *r_clip_y_min,
+                                                 float *r_clip_y_max)
+{
+  BLI_assert(r_start_x != nullptr);
+  BLI_assert(r_end_x != nullptr);
+  BLI_assert(r_clip_y_min != nullptr);
+  BLI_assert(r_clip_y_max != nullptr);
+
+  *r_start_x = std::floor(*r_start_x) + 0.5f;
+  *r_end_x = std::floor(*r_end_x) + 0.5f;
+  *r_clip_y_min = std::floor(*r_clip_y_min) + 0.5f;
+  *r_clip_y_max = std::floor(*r_clip_y_max) + 0.5f;
+
+  if (*r_end_x <= *r_start_x) {
+    *r_end_x = *r_start_x + 1.0f;
+  }
+  if (*r_clip_y_max <= *r_clip_y_min) {
+    *r_clip_y_max = *r_clip_y_min + 1.0f;
+  }
+}
+
+static void better_timeline_clip_outline_color_get(const BetterTimelineClip *clip, float color[4])
+{
+  if (better_timeline_clip_is_selected(clip)) {
+    color[0] = 0.98f;
+    color[1] = 0.98f;
+    color[2] = 0.98f;
+    color[3] = 0.95f;
+    return;
+  }
+
+  color[0] = 0.02f;
+  color[1] = 0.02f;
+  color[2] = 0.02f;
+  color[3] = 0.65f;
+}
+
+static void better_timeline_draw_clip_outline(const float start_x,
+                                              const float end_x,
+                                              const float clip_y_min,
+                                              const float clip_y_max,
+                                              const uint pos,
+                                              const float color[4],
+                                              const bool selected)
+{
+  immUniformColor4f(color[0], color[1], color[2], color[3]);
+  GPU_line_width(1.0f);
+  immBegin(GPU_PRIM_LINES, selected ? 8 : 6);
+  immVertex2f(pos, start_x, clip_y_max);
+  immVertex2f(pos, end_x, clip_y_max);
+  immVertex2f(pos, end_x, clip_y_max);
+  immVertex2f(pos, end_x, clip_y_min);
+  immVertex2f(pos, start_x, clip_y_min);
+  immVertex2f(pos, start_x, clip_y_max);
+  if (selected) {
+    immVertex2f(pos, start_x, clip_y_min);
+    immVertex2f(pos, end_x, clip_y_min);
+  }
+  immEnd();
+}
+
+static void better_timeline_draw_clip_bottom_accent(const float start_x,
+                                                    const float end_x,
+                                                    const float clip_y_min,
+                                                    const uint pos,
+                                                    const float clip_color[4])
+{
+  const float accent_color[4] = {
+      std::max(clip_color[0] - 0.18f, 0.0f),
+      std::max(clip_color[1] - 0.18f, 0.0f),
+      std::max(clip_color[2] - 0.18f, 0.0f),
+      0.95f,
+  };
+  immUniformColor4f(
+      accent_color[0], accent_color[1], accent_color[2], accent_color[3]);
+  immRectf(pos, start_x, clip_y_min, end_x, clip_y_min + (2.0f * UI_SCALE_FAC));
+}
+
+static void better_timeline_draw_clip_selection_highlight(const float start_x,
+                                                          const float end_x,
+                                                          const float clip_y_min,
+                                                          const float clip_y_max,
+                                                          const uint pos)
+{
+  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.18f);
+  immRectf(pos,
+           start_x + (1.0f * UI_SCALE_FAC),
+           clip_y_max - (2.0f * UI_SCALE_FAC),
+           end_x - (1.0f * UI_SCALE_FAC),
+           clip_y_max - (1.0f * UI_SCALE_FAC));
+
+  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.10f);
+  immRectf(pos,
+           start_x + (1.0f * UI_SCALE_FAC),
+           clip_y_min + (1.0f * UI_SCALE_FAC),
+           start_x + (2.0f * UI_SCALE_FAC),
+           clip_y_max - (1.0f * UI_SCALE_FAC));
+
+  immRectf(pos,
+           end_x - (2.0f * UI_SCALE_FAC),
+           clip_y_min + (1.0f * UI_SCALE_FAC),
+           end_x - (1.0f * UI_SCALE_FAC),
+           clip_y_max - (1.0f * UI_SCALE_FAC));
+}
+
+static void better_timeline_draw_clip_connector(const View2D *v2d,
+                                                const BetterTimelineClip *left_clip,
+                                                const BetterTimelineClip *right_clip,
+                                                const float clip_y_min,
+                                                const float clip_y_max,
+                                                const uint pos)
+{
+  if (left_clip == nullptr || right_clip == nullptr ||
+      !ed::better_timeline::clip_types_allow_overlap(left_clip->clip_type, right_clip->clip_type))
+  {
+    return;
+  }
+
+  if (!STREQ(left_clip->clip_type, right_clip->clip_type)) {
+    return;
+  }
+
+  UNUSED_VARS(v2d, clip_y_min, clip_y_max, pos);
+}
+
+static void better_timeline_draw_blend_overlap(const View2D *v2d,
+                                               const BetterTimelineClip *left_clip,
+                                               const BetterTimelineClip *right_clip,
+                                               const float clip_y_min,
+                                               const float clip_y_max,
+                                               const uint pos)
+{
+  if (left_clip == nullptr || right_clip == nullptr ||
+      !ed::better_timeline::clip_types_allow_overlap(left_clip->clip_type, right_clip->clip_type))
+  {
+    return;
+  }
+
+  const float overlap_start = std::max(left_clip->start_frame, right_clip->start_frame);
+  const float overlap_end = std::min(left_clip->end_frame, right_clip->end_frame);
+  if (overlap_end <= overlap_start) {
+    return;
+  }
+
+  const float overlap_start_x = ui::view2d_view_to_region_x(v2d, overlap_start);
+  const float overlap_end_x = ui::view2d_view_to_region_x(v2d, overlap_end);
+  if (overlap_end_x <= overlap_start_x) {
+    return;
+  }
+
+  float left_color[4];
+  float right_color[4];
+  better_timeline_clip_color_get(left_clip, left_color);
+  better_timeline_clip_color_get(right_clip, right_color);
+  left_color[3] = 0.95f;
+  right_color[3] = 0.95f;
+
+  immUniformColor4f(left_color[0], left_color[1], left_color[2], left_color[3]);
+  immBegin(GPU_PRIM_TRIS, 3);
+  immVertex2f(pos, overlap_start_x, clip_y_min);
+  immVertex2f(pos, overlap_start_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immEnd();
+
+  immUniformColor4f(right_color[0], right_color[1], right_color[2], right_color[3]);
+  immBegin(GPU_PRIM_TRIS, 3);
+  immVertex2f(pos, overlap_start_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immEnd();
+
+  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.28f);
+  GPU_line_width(1.0f);
+  immBegin(GPU_PRIM_LINES, 4);
+  immVertex2f(pos, overlap_start_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immVertex2f(pos, overlap_start_x, clip_y_min);
+  immVertex2f(pos, overlap_end_x, clip_y_max);
+  immEnd();
+}
+
+static void better_timeline_draw_blend_overlap_preview(const View2D *v2d,
+                                                       const BetterTimelineClip *left_clip,
+                                                       const float left_start_frame,
+                                                       const float left_end_frame,
+                                                       const BetterTimelineClip *right_clip,
+                                                       const float right_start_frame,
+                                                       const float right_end_frame,
+                                                       const float clip_y_min,
+                                                       const float clip_y_max,
+                                                       const uint pos)
+{
+  if (left_clip == nullptr || right_clip == nullptr ||
+      !ed::better_timeline::clip_types_allow_overlap(left_clip->clip_type, right_clip->clip_type))
+  {
+    return;
+  }
+
+  const float overlap_start = std::max(left_start_frame, right_start_frame);
+  const float overlap_end = std::min(left_end_frame, right_end_frame);
+  if (overlap_end <= overlap_start) {
+    return;
+  }
+
+  const float overlap_start_x = ui::view2d_view_to_region_x(v2d, overlap_start);
+  const float overlap_end_x = ui::view2d_view_to_region_x(v2d, overlap_end);
+  if (overlap_end_x <= overlap_start_x) {
+    return;
+  }
+
+  float left_color[4];
+  float right_color[4];
+  better_timeline_clip_color_get(left_clip, left_color);
+  better_timeline_clip_color_get(right_clip, right_color);
+  left_color[3] = 0.95f;
+  right_color[3] = 0.95f;
+
+  immUniformColor4f(left_color[0], left_color[1], left_color[2], left_color[3]);
+  immBegin(GPU_PRIM_TRIS, 3);
+  immVertex2f(pos, overlap_start_x, clip_y_min);
+  immVertex2f(pos, overlap_start_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immEnd();
+
+  immUniformColor4f(right_color[0], right_color[1], right_color[2], right_color[3]);
+  immBegin(GPU_PRIM_TRIS, 3);
+  immVertex2f(pos, overlap_start_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immEnd();
+
+  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.28f);
+  GPU_line_width(1.0f);
+  immBegin(GPU_PRIM_LINES, 4);
+  immVertex2f(pos, overlap_start_x, clip_y_max);
+  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immVertex2f(pos, overlap_start_x, clip_y_min);
+  immVertex2f(pos, overlap_end_x, clip_y_max);
+  immEnd();
+}
+
+static void better_timeline_draw_clip_label(const BetterTimelineClip *clip,
+                                            const float start_x,
+                                            const float end_x,
+                                            const float clip_y_min,
+                                            const float clip_y_max)
+{
+  const char *clip_label = clip->name[0] != '\0' ? clip->name : better_timeline_clip_type_label_get(clip);
+  if (clip_label[0] == '\0' || (end_x - start_x) <= (32.0f * UI_SCALE_FAC)) {
+    return;
+  }
+
+  BLF_color4f(BLF_default(), 0.97f, 0.97f, 0.97f, 0.95f);
+  BLF_draw_default(start_x + (8.0f * UI_SCALE_FAC),
+                   clip_y_min + ((clip_y_max - clip_y_min) * 0.5f) - (5.0f * UI_SCALE_FAC),
+                   0.0f,
+                   clip_label,
+                   BLF_DRAW_STR_DUMMY_MAX);
+}
+
+void better_timeline_clip_drag_visual_state_update(const ARegion *region,
+                                                   const BetterTimelineTrack *source_track,
+                                                   const BetterTimelineTrack *target_track,
+                                                   const BetterTimelineClip *dragged_clip,
+                                                   const Span<const BetterTimelineClip *> moved_clips,
+                                                   const Span<const BetterTimelineTrack *> moved_clip_tracks,
+                                                   const float preview_start_frame,
+                                                   const float preview_end_frame,
+                                                   const bool drop_valid)
+{
+  g_better_timeline_clip_drag_visual_state.region = region;
+  g_better_timeline_clip_drag_visual_state.source_track = source_track;
+  g_better_timeline_clip_drag_visual_state.target_track = target_track;
+  g_better_timeline_clip_drag_visual_state.dragged_clip = dragged_clip;
+  g_better_timeline_clip_drag_visual_state.moved_clips.clear();
+  g_better_timeline_clip_drag_visual_state.moved_clips.extend(moved_clips);
+  g_better_timeline_clip_drag_visual_state.moved_clip_tracks.clear();
+  g_better_timeline_clip_drag_visual_state.moved_clip_tracks.extend(moved_clip_tracks);
+  g_better_timeline_clip_drag_visual_state.preview_start_frame = preview_start_frame;
+  g_better_timeline_clip_drag_visual_state.preview_end_frame = preview_end_frame;
+  g_better_timeline_clip_drag_visual_state.drop_valid = drop_valid;
+  g_better_timeline_clip_drag_visual_state.active = true;
+}
+
+void better_timeline_clip_drag_visual_state_clear()
+{
+  g_better_timeline_clip_drag_visual_state.region = nullptr;
+  g_better_timeline_clip_drag_visual_state.source_track = nullptr;
+  g_better_timeline_clip_drag_visual_state.target_track = nullptr;
+  g_better_timeline_clip_drag_visual_state.dragged_clip = nullptr;
+  g_better_timeline_clip_drag_visual_state.moved_clips.clear();
+  g_better_timeline_clip_drag_visual_state.moved_clip_tracks.clear();
+  g_better_timeline_clip_drag_visual_state.preview_start_frame = 0.0f;
+  g_better_timeline_clip_drag_visual_state.preview_end_frame = 0.0f;
+  g_better_timeline_clip_drag_visual_state.drop_valid = false;
+  g_better_timeline_clip_drag_visual_state.active = false;
+}
+
+bool better_timeline_clip_drag_visual_state_is_dragged_clip(const BetterTimelineClip *clip)
+{
+  return g_better_timeline_clip_drag_visual_state.active &&
+         g_better_timeline_clip_drag_visual_state.moved_clips.contains(clip);
+}
+
+static void better_timeline_draw_clips(const ARegion *region,
+                                       const SpaceBetterTimeline *sbetter_timeline,
+                                       const View2D *v2d)
+{
+  const rcti body_rect = better_timeline_body_rect(region, sbetter_timeline);
+  BetterTimelineClipState clip_state;
+  better_timeline_clip_begin(region, body_rect, &clip_state);
+
+  GPU_matrix_push_projection();
+  wmOrtho2_region_pixelspace(region);
+  GPU_blend(GPU_BLEND_ALPHA);
+
+  GPUVertFormat *format = immVertexFormat();
+  const uint pos = GPU_vertformat_attr_add(format, "pos", gpu::VertAttrType::SFLOAT_32_32);
+  immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+
+  const int track_count = better_timeline_track_count(sbetter_timeline);
+  const bool clip_drag_active = g_better_timeline_clip_drag_visual_state.active &&
+                                g_better_timeline_clip_drag_visual_state.region == region;
+  for (int row_index = 0; row_index < track_count; row_index++) {
+    if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+      continue;
+    }
+
+    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    if (track == nullptr) {
+      continue;
+    }
+
+    const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+    const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+    const float clip_y_max = row_y_max - (6.0f * UI_SCALE_FAC);
+    const float clip_y_min = row_y_min + (6.0f * UI_SCALE_FAC);
+
+    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
+         clip != nullptr;
+         clip = clip->next)
+    {
+      if (clip_drag_active && better_timeline_clip_drag_visual_state_is_dragged_clip(clip)) {
+        continue;
+      }
+
+      float start_x = ui::view2d_view_to_region_x(v2d, clip->start_frame);
+      float end_x = ui::view2d_view_to_region_x(v2d, clip->end_frame);
+      if (end_x < body_rect.xmin || start_x > body_rect.xmax) {
+        continue;
+      }
+
+      if (end_x <= start_x) {
+        end_x = start_x + 1.0f;
+      }
+
+      end_x = std::max(end_x, start_x + (10.0f * UI_SCALE_FAC));
+      float snapped_clip_y_min = clip_y_min;
+      float snapped_clip_y_max = clip_y_max;
+      better_timeline_clip_rect_pixel_snap(
+          &start_x, &end_x, &snapped_clip_y_min, &snapped_clip_y_max);
+
+      float clip_color[4];
+      better_timeline_clip_color_get(clip, clip_color);
+      immUniformColor4f(clip_color[0], clip_color[1], clip_color[2], clip_color[3]);
+      immRectf(pos, start_x, snapped_clip_y_min, end_x, snapped_clip_y_max);
+
+      better_timeline_draw_clip_bottom_accent(
+          start_x, end_x, snapped_clip_y_min, pos, clip_color);
+
+      if (better_timeline_clip_is_selected(clip)) {
+        better_timeline_draw_clip_selection_highlight(
+            start_x, end_x, snapped_clip_y_min, snapped_clip_y_max, pos);
+      }
+
+      float outline_color[4];
+      better_timeline_clip_outline_color_get(clip, outline_color);
+      better_timeline_draw_clip_outline(start_x,
+                                        end_x,
+                                        snapped_clip_y_min,
+                                        snapped_clip_y_max,
+                                        pos,
+                                        outline_color,
+                                        better_timeline_clip_is_selected(clip));
+      better_timeline_draw_clip_label(
+          clip, start_x, end_x, snapped_clip_y_min, snapped_clip_y_max);
+    }
+
+    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
+         clip != nullptr;
+         clip = clip->next)
+    {
+      if (clip_drag_active && better_timeline_clip_drag_visual_state_is_dragged_clip(clip)) {
+        continue;
+      }
+
+      for (const BetterTimelineClip *other_clip = clip->next; other_clip != nullptr;
+           other_clip = other_clip->next)
+      {
+        if (clip_drag_active && better_timeline_clip_drag_visual_state_is_dragged_clip(other_clip)) {
+          continue;
+        }
+
+        better_timeline_draw_clip_connector(
+            v2d, clip, other_clip, clip_y_min, clip_y_max, pos);
+        better_timeline_draw_blend_overlap(
+            v2d, clip, other_clip, clip_y_min, clip_y_max, pos);
+      }
+    }
+  }
+
+  if (clip_drag_active && g_better_timeline_clip_drag_visual_state.dragged_clip != nullptr) {
+    const float frame_delta = g_better_timeline_clip_drag_visual_state.preview_start_frame -
+                              g_better_timeline_clip_drag_visual_state.dragged_clip->start_frame;
+    for (int i = 0; i < g_better_timeline_clip_drag_visual_state.moved_clips.size(); i++) {
+      const BetterTimelineClip *clip = g_better_timeline_clip_drag_visual_state.moved_clips[i];
+      const BetterTimelineTrack *preview_track = g_better_timeline_clip_drag_visual_state
+                                                     .moved_clip_tracks[i];
+      const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
+      if (row_index < 0) {
+        continue;
+      }
+
+      const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+      const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+      const float clip_y_max = row_y_max - (6.0f * UI_SCALE_FAC);
+      const float clip_y_min = row_y_min + (6.0f * UI_SCALE_FAC);
+
+      float start_x = ui::view2d_view_to_region_x(v2d, clip->start_frame + frame_delta);
+      float end_x = ui::view2d_view_to_region_x(v2d, clip->end_frame + frame_delta);
+      end_x = std::max(end_x, start_x + (10.0f * UI_SCALE_FAC));
+      float snapped_clip_y_min = clip_y_min;
+      float snapped_clip_y_max = clip_y_max;
+      better_timeline_clip_rect_pixel_snap(
+          &start_x, &end_x, &snapped_clip_y_min, &snapped_clip_y_max);
+
+      float clip_color[4];
+      better_timeline_clip_color_get(clip, clip_color);
+      if (!g_better_timeline_clip_drag_visual_state.drop_valid) {
+        clip_color[0] = 0.86f;
+        clip_color[1] = 0.24f;
+        clip_color[2] = 0.24f;
+      }
+      clip_color[3] = 0.92f;
+
+      immUniformColor4f(clip_color[0], clip_color[1], clip_color[2], clip_color[3]);
+      immRectf(pos, start_x, snapped_clip_y_min, end_x, snapped_clip_y_max);
+      better_timeline_draw_clip_bottom_accent(
+          start_x, end_x, snapped_clip_y_min, pos, clip_color);
+      if (better_timeline_clip_is_selected(clip)) {
+        better_timeline_draw_clip_selection_highlight(
+            start_x, end_x, snapped_clip_y_min, snapped_clip_y_max, pos);
+      }
+      float outline_color[4];
+      better_timeline_clip_outline_color_get(clip, outline_color);
+      better_timeline_draw_clip_outline(
+          start_x,
+          end_x,
+          snapped_clip_y_min,
+          snapped_clip_y_max,
+          pos,
+          outline_color,
+          better_timeline_clip_is_selected(clip));
+      better_timeline_draw_clip_label(
+          clip, start_x, end_x, snapped_clip_y_min, snapped_clip_y_max);
+    }
+
+    for (int i = 0; i < g_better_timeline_clip_drag_visual_state.moved_clips.size(); i++) {
+      const BetterTimelineClip *preview_clip = g_better_timeline_clip_drag_visual_state.moved_clips[i];
+      const BetterTimelineTrack *preview_track = g_better_timeline_clip_drag_visual_state
+                                                     .moved_clip_tracks[i];
+      const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
+      if (row_index < 0) {
+        continue;
+      }
+
+      const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+      const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+      const float clip_y_max = row_y_max - (6.0f * UI_SCALE_FAC);
+      const float clip_y_min = row_y_min + (6.0f * UI_SCALE_FAC);
+      const float preview_start_frame = preview_clip->start_frame + frame_delta;
+      const float preview_end_frame = preview_clip->end_frame + frame_delta;
+
+      for (const BetterTimelineClip *other_clip = static_cast<const BetterTimelineClip *>(preview_track->clips.first);
+           other_clip != nullptr;
+           other_clip = other_clip->next)
+      {
+        if (better_timeline_clip_drag_visual_state_is_dragged_clip(other_clip)) {
+          continue;
+        }
+
+        better_timeline_draw_blend_overlap_preview(v2d,
+                                                   preview_clip,
+                                                   preview_start_frame,
+                                                   preview_end_frame,
+                                                   other_clip,
+                                                   other_clip->start_frame,
+                                                   other_clip->end_frame,
+                                                   clip_y_min,
+                                                   clip_y_max,
+                                                   pos);
+      }
+
+      for (int j = i + 1; j < g_better_timeline_clip_drag_visual_state.moved_clips.size(); j++) {
+        const BetterTimelineClip *other_preview_clip =
+            g_better_timeline_clip_drag_visual_state.moved_clips[j];
+        const BetterTimelineTrack *other_preview_track =
+            g_better_timeline_clip_drag_visual_state.moved_clip_tracks[j];
+        if (preview_track != other_preview_track) {
+          continue;
+        }
+
+        better_timeline_draw_blend_overlap_preview(
+            v2d,
+            preview_clip,
+            preview_start_frame,
+            preview_end_frame,
+            other_preview_clip,
+            other_preview_clip->start_frame + frame_delta,
+            other_preview_clip->end_frame + frame_delta,
+            clip_y_min,
+            clip_y_max,
+            pos);
+      }
+    }
+  }
+
+  immUnbindProgram();
+  GPU_blend(GPU_BLEND_NONE);
+  GPU_matrix_pop_projection();
+  better_timeline_clip_end(clip_state);
 }
 
 void better_timeline_track_drag_visual_state_update(const ARegion *region,
@@ -407,11 +977,16 @@ void better_timeline_main_region_draw(const bContext *C, ARegion *region)
   better_timeline_draw_grid_x_frames(v2d, scene);
   better_timeline_view_ortho(v2d);
   ANIM_draw_framerange(scene, v2d);
-  if (current_frame_x >= body_rect.xmin && current_frame_x <= body_rect.xmax) {
-    ANIM_draw_cfra(C, v2d, DRAWCFRA_WIDE);
-  }
   ui::view2d_view_restore(C);
   better_timeline_clip_end(clip_state);
+  better_timeline_draw_clips(region, sbetter_timeline, v2d);
+  if (current_frame_x >= body_rect.xmin && current_frame_x <= body_rect.xmax) {
+    better_timeline_clip_begin(region, body_rect, &clip_state);
+    better_timeline_view_ortho(v2d);
+    ANIM_draw_cfra(C, v2d, DRAWCFRA_WIDE);
+    ui::view2d_view_restore(C);
+    better_timeline_clip_end(clip_state);
+  }
 
   const rcti scrub_rect = better_timeline_scrub_rect(region, sbetter_timeline);
   better_timeline_clip_begin(region, scrub_rect, &clip_state);

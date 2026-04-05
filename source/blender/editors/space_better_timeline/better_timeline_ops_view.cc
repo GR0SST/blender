@@ -25,6 +25,7 @@
 #include "UI_view2d.hh"
 
 #include "WM_api.hh"
+#include "WM_keymap.hh"
 #include "WM_types.hh"
 
 #include "better_timeline_intern.hh" /* own include */
@@ -339,6 +340,12 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
   bool has_track_select = false;
   bool has_track_select_shift = false;
   bool has_track_select_oskey = false;
+  bool has_clip_drag = false;
+  bool has_clip_drag_shift = false;
+  bool has_clip_drag_oskey = false;
+  bool has_clip_move = false;
+  bool has_delete_clip_del = false;
+  bool has_delete_clip_x = false;
   bool has_add_track = false;
   bool has_add_track_menu = false;
   bool has_delete_track_del = false;
@@ -356,12 +363,56 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
   bool has_play_toggle = false;
   bool has_undo = false;
   bool has_redo = false;
+  bool has_duplicate_clip = false;
+  bool has_duplicate_track = false;
+  bool has_copy_clip = false;
+  bool has_copy_track = false;
+  bool has_paste_clip = false;
+  bool has_paste_track = false;
 
+  wmKeyMapItem *kmi_next = nullptr;
   for (wmKeyMapItem *kmi = static_cast<wmKeyMapItem *>(keymap->items.first); kmi != nullptr;
-       kmi = kmi->next)
+       kmi = kmi_next)
   {
+    kmi_next = kmi->next;
     if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_add_track")) {
-      has_add_track = true;
+      if (kmi->type == LEFTMOUSE && kmi->val == KM_PRESS) {
+        kmi->val = KM_RELEASE;
+        WM_keyconfig_update_tag(keymap, kmi);
+      }
+      has_add_track = (kmi->type == LEFTMOUSE && kmi->val == KM_RELEASE);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_clip_drag")) {
+      if (kmi->type == LEFTMOUSE && kmi->val == KM_PRESS_DRAG) {
+        kmi->val = KM_PRESS;
+        WM_keyconfig_update_tag(keymap, kmi);
+      }
+      if (kmi->type == LEFTMOUSE && kmi->val == KM_PRESS) {
+        if (kmi->shift == KM_MOD_HELD) {
+          has_clip_drag_shift = true;
+        }
+        else if (kmi->oskey == KM_MOD_HELD) {
+          has_clip_drag_oskey = true;
+        }
+        else if (kmi->shift == KM_NOTHING && kmi->oskey == KM_NOTHING) {
+          has_clip_drag = true;
+        }
+      }
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_clip_select")) {
+      WM_keymap_remove_item(keymap, kmi);
+      continue;
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_move_clip")) {
+      has_clip_move = (kmi->type == EVT_GKEY && kmi->val == KM_PRESS);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_delete_clip")) {
+      if (kmi->type == EVT_DELKEY) {
+        has_delete_clip_del = true;
+      }
+      else if (kmi->type == EVT_XKEY) {
+        has_delete_clip_x = true;
+      }
     }
     else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_add_track_menu")) {
       has_add_track_menu = true;
@@ -430,6 +481,29 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
       has_redo = (kmi->type == EVT_ZKEY && kmi->val == KM_PRESS && kmi->oskey == KM_MOD_HELD &&
                   kmi->shift == KM_MOD_HELD);
     }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_duplicate_clip")) {
+      has_duplicate_clip = (kmi->type == EVT_DKEY && kmi->val == KM_PRESS &&
+                            kmi->shift == KM_MOD_HELD);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_duplicate_track")) {
+      has_duplicate_track = (kmi->type == EVT_DKEY && kmi->val == KM_PRESS &&
+                             kmi->shift == KM_MOD_HELD);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_copy_clip")) {
+      has_copy_clip = (kmi->type == EVT_CKEY && kmi->val == KM_PRESS && kmi->oskey == KM_MOD_HELD);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_copy_track")) {
+      has_copy_track = (kmi->type == EVT_CKEY && kmi->val == KM_PRESS &&
+                        kmi->oskey == KM_MOD_HELD);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_paste_clip")) {
+      has_paste_clip = (kmi->type == EVT_VKEY && kmi->val == KM_PRESS &&
+                        kmi->oskey == KM_MOD_HELD);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_paste_track")) {
+      has_paste_track = (kmi->type == EVT_VKEY && kmi->val == KM_PRESS &&
+                         kmi->oskey == KM_MOD_HELD);
+    }
   }
 
   if (!has_panel_resize) {
@@ -444,10 +518,64 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
   if (!has_add_track) {
     KeyMapItem_Params params{};
     params.type = LEFTMOUSE;
-    params.value = KM_PRESS;
+    params.value = KM_RELEASE;
     params.modifier = 0;
     params.direction = KM_ANY;
     WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_add_track", &params);
+  }
+
+  if (!has_clip_drag) {
+    KeyMapItem_Params params{};
+    params.type = LEFTMOUSE;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_clip_drag", &params);
+  }
+
+  if (!has_clip_drag_shift) {
+    KeyMapItem_Params params{};
+    params.type = LEFTMOUSE;
+    params.value = KM_PRESS;
+    params.modifier = KM_SHIFT;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_clip_drag", &params);
+  }
+
+  if (!has_clip_drag_oskey) {
+    KeyMapItem_Params params{};
+    params.type = LEFTMOUSE;
+    params.value = KM_PRESS;
+    params.modifier = KM_OSKEY;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_clip_drag", &params);
+  }
+
+  if (!has_clip_move) {
+    KeyMapItem_Params params{};
+    params.type = EVT_GKEY;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_move_clip", &params);
+  }
+
+  if (!has_delete_clip_del) {
+    KeyMapItem_Params params{};
+    params.type = EVT_DELKEY;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_delete_clip", &params);
+  }
+
+  if (!has_delete_clip_x) {
+    KeyMapItem_Params params{};
+    params.type = EVT_XKEY;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_delete_clip", &params);
   }
 
   if (!has_add_track_menu) {
@@ -547,6 +675,60 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
     params.modifier = KM_OSKEY | KM_SHIFT;
     params.direction = KM_ANY;
     WM_keymap_add_item(keymap, "ED_OT_redo", &params);
+  }
+
+  if (!has_duplicate_clip) {
+    KeyMapItem_Params params{};
+    params.type = EVT_DKEY;
+    params.value = KM_PRESS;
+    params.modifier = KM_SHIFT;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_duplicate_clip", &params);
+  }
+
+  if (!has_duplicate_track) {
+    KeyMapItem_Params params{};
+    params.type = EVT_DKEY;
+    params.value = KM_PRESS;
+    params.modifier = KM_SHIFT;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_duplicate_track", &params);
+  }
+
+  if (!has_copy_clip) {
+    KeyMapItem_Params params{};
+    params.type = EVT_CKEY;
+    params.value = KM_PRESS;
+    params.modifier = KM_OSKEY;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_copy_clip", &params);
+  }
+
+  if (!has_copy_track) {
+    KeyMapItem_Params params{};
+    params.type = EVT_CKEY;
+    params.value = KM_PRESS;
+    params.modifier = KM_OSKEY;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_copy_track", &params);
+  }
+
+  if (!has_paste_clip) {
+    KeyMapItem_Params params{};
+    params.type = EVT_VKEY;
+    params.value = KM_PRESS;
+    params.modifier = KM_OSKEY;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_paste_clip", &params);
+  }
+
+  if (!has_paste_track) {
+    KeyMapItem_Params params{};
+    params.type = EVT_VKEY;
+    params.value = KM_PRESS;
+    params.modifier = KM_OSKEY;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_paste_track", &params);
   }
 
   if (!has_scroll_tracks_up) {

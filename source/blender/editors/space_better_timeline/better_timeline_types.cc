@@ -51,11 +51,15 @@ static void ensure_builtin_types_registered()
 
   builtin_types_registered = true;
 
-  auto add_clip_type = [](const char *idname, const char *label, const char *description) {
+  auto add_clip_type = [](const char *idname,
+                          const char *label,
+                          const char *description,
+                          const BetterTimelineClipBlendMode blend_mode) {
     auto clip_type = std::make_unique<BetterTimelineClipType>();
     STRNCPY_UTF8(clip_type->idname, idname);
     STRNCPY_UTF8(clip_type->label, label);
     clip_type->description = description;
+    clip_type->blend_mode = blend_mode;
     clip_type_register(std::move(clip_type));
   };
 
@@ -75,13 +79,16 @@ static void ensure_builtin_types_registered()
 
   add_clip_type(BETTER_TIMELINE_CLIP_TYPE_TEST,
                 "Test Clip",
-                "Placeholder clip type for early Better Timeline development");
+                "Placeholder clip type for early Better Timeline development",
+                BetterTimelineClipBlendMode::Solid);
   add_clip_type(BETTER_TIMELINE_CLIP_TYPE_ANIMATION,
                 "Animation Clip",
-                "Animation data clip for animation-oriented tracks");
+                "Animation data clip for animation-oriented tracks",
+                BetterTimelineClipBlendMode::Blendable);
   add_clip_type(BETTER_TIMELINE_CLIP_TYPE_SPLINE,
                 "Spline Clip",
-                "Spline data clip for spline-oriented tracks");
+                "Spline data clip for spline-oriented tracks",
+                BetterTimelineClipBlendMode::Blendable);
 
   add_track_type(BETTER_TIMELINE_TRACK_TYPE_TEST,
                  "Test Track",
@@ -222,6 +229,28 @@ bool track_accepts_clip_type(const BetterTimelineTrack &track, const StringRef c
 bool track_accepts_clip(const BetterTimelineTrack &track, const BetterTimelineClip &clip)
 {
   return track_type_accepts_clip_type(track.track_type, clip.clip_type);
+}
+
+BetterTimelineClipBlendMode clip_type_blend_mode(const BetterTimelineClipType &clip_type)
+{
+  return clip_type.blend_mode;
+}
+
+BetterTimelineClipBlendMode clip_type_blend_mode(const StringRef clip_type_idname)
+{
+  const BetterTimelineClipType *clip_type = clip_type_find_from_idname(clip_type_idname);
+  return (clip_type != nullptr) ? clip_type_blend_mode(*clip_type) :
+                                  BetterTimelineClipBlendMode::Solid;
+}
+
+bool clip_type_is_blendable(const StringRef clip_type_idname)
+{
+  return clip_type_blend_mode(clip_type_idname) == BetterTimelineClipBlendMode::Blendable;
+}
+
+bool clip_types_allow_overlap(const StringRef clip_type_idname_a, const StringRef clip_type_idname_b)
+{
+  return clip_type_is_blendable(clip_type_idname_a) && clip_type_is_blendable(clip_type_idname_b);
 }
 
 Vector<const BetterTimelineClipType *> compatible_clip_types(const BetterTimelineTrackType &track_type)

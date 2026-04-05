@@ -147,6 +147,9 @@ void ED_spacetype_better_timeline()
   ARegionType *art;
 
   better_timeline_track_ops_register();
+  better_timeline_clip_ops_register();
+  better_timeline_clipboard_track_ops_register();
+  better_timeline_clipboard_clip_ops_register();
   better_timeline_view_ops_register();
 
   st->spaceid = SPACE_BETTER_TIMELINE;
