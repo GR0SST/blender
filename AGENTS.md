@@ -69,6 +69,8 @@ Current runtime architecture:
 - `BetterTimelineTrackType::clip_type_poll` is the central extensibility point for custom compatibility logic when a simple static compatibility list is not enough.
 - Better Timeline undo/duplicate logic must deep-copy track/clip properties and clip lists. Do not revert to shallow `BLI_duplicatelist()` behavior for tracks now that nested typed data exists.
 - Better Timeline blend read/write must handle nested `clips` and `IDProperty` payloads explicitly; plain struct-list serialization is no longer sufficient by itself.
+- `SpaceBetterTimeline::runtime` owns Better Timeline transient editor-only runtime state such as drag/selection visual overlays. New temporary interaction/draw state should live there or in another explicit runtime owner with a defined lifecycle, not in static/global objects.
+- Better Timeline runtime state must be created during space init/duplicate/read paths and freed from the space lifecycle before allocator shutdown. Do not fix shutdown-order problems by intentionally leaking static storage unless there is no viable owner-based alternative.
 
 Main drawing pieces already in use:
 - `ED_time_scrub_draw()` and `ED_time_scrub_draw_current_frame()` provide the top ruler strip and active-frame marker.
