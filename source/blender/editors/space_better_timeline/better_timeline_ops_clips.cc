@@ -241,6 +241,26 @@ static bool better_timeline_is_in_timeline_canvas(const ARegion *region,
   return BLI_rcti_isect_pt(&body_rect, region_x, region_y);
 }
 
+static bool better_timeline_clip_box_select_rect_get(const ARegion *region,
+                                                     const SpaceBetterTimeline *sbetter_timeline,
+                                                     const int start_x,
+                                                     const int start_y,
+                                                     const int end_x,
+                                                     const int end_y,
+                                                     rcti *r_rect)
+{
+  BLI_assert(r_rect != nullptr);
+
+  rcti unclamped_rect{};
+  unclamped_rect.xmin = std::min(start_x, end_x);
+  unclamped_rect.xmax = std::max(start_x, end_x);
+  unclamped_rect.ymin = std::min(start_y, end_y);
+  unclamped_rect.ymax = std::max(start_y, end_y);
+
+  const rcti body_rect = better_timeline_body_rect(region, sbetter_timeline);
+  return BLI_rcti_isect(&unclamped_rect, &body_rect, r_rect);
+}
+
 static rctf better_timeline_clip_rect(const ARegion *region,
                                       const SpaceBetterTimeline *sbetter_timeline,
                                       const View2D *v2d,
@@ -301,6 +321,66 @@ BetterTimelineClip *better_timeline_clip_from_region_position(const ARegion *reg
     }
   }
   return closest_clip;
+}
+
+static bool better_timeline_clip_intersects_box_selection(
+    const ARegion *region,
+    const SpaceBetterTimeline *sbetter_timeline,
+    const View2D *v2d,
+    const BetterTimelineTrack *track,
+    const BetterTimelineClip *clip,
+    const rcti &selection_rect)
+{
+  const rctf clip_rect = better_timeline_clip_rect(region, sbetter_timeline, v2d, track, clip);
+  return !(clip_rect.xmax < float(selection_rect.xmin) ||
+           clip_rect.xmin > float(selection_rect.xmax) ||
+           clip_rect.ymax < float(selection_rect.ymin) ||
+           clip_rect.ymin > float(selection_rect.ymax));
+}
+
+static bool better_timeline_clip_box_select_apply(bContext *C,
+                                                  const rcti &selection_rect,
+                                                  const bool extend,
+                                                  const bool toggle)
+{
+  ScrArea *area = CTX_wm_area(C);
+  ARegion *region = CTX_wm_region(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+  const View2D *v2d = &region->v2d;
+
+  better_timeline_clear_selection(sbetter_timeline);
+  if (!extend && !toggle) {
+    better_timeline_clear_clip_selection(sbetter_timeline);
+  }
+
+  bool any_intersection = false;
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+         clip != nullptr;
+         clip = clip->next)
+    {
+      if (!better_timeline_clip_intersects_box_selection(
+              region, sbetter_timeline, v2d, track, clip, selection_rect))
+      {
+        continue;
+      }
+
+      any_intersection = true;
+      if (toggle) {
+        better_timeline_clip_set_selected(clip, !better_timeline_clip_is_selected(clip));
+      }
+      else {
+        better_timeline_clip_set_selected(clip, true);
+      }
+    }
+  }
+
+  sbetter_timeline->selected_clip_index = better_timeline_first_selected_clip_index(sbetter_timeline);
+  ED_area_tag_redraw(area);
+  return any_intersection;
 }
 
 static bool better_timeline_add_clip_poll(bContext *C)
@@ -478,6 +558,17 @@ static bool better_timeline_clip_drag_poll(bContext *C)
   return better_timeline_operator_region_poll(C);
 }
 
+static void better_timeline_clip_box_select_finish(bContext *C, wmOperator *op)
+{
+  auto *box_select_data = static_cast<BetterTimelineClipBoxSelectData *>(op->customdata);
+  better_timeline_clip_box_select_visual_state_clear();
+  if (box_select_data != nullptr) {
+    MEM_delete(box_select_data);
+    op->customdata = nullptr;
+  }
+  ED_area_tag_redraw(CTX_wm_area(C));
+}
+
 static bool better_timeline_clip_move_poll(bContext *C)
 {
   if (!better_timeline_operator_region_poll(C)) {
@@ -577,6 +668,7 @@ static bool better_timeline_clip_drag_start(bContext *C,
   }
 
   auto *drag_data = MEM_new<BetterTimelineClipDragData>(__func__);
+  drag_data->interaction_mode = BETTER_TIMELINE_CLIP_INTERACTION_DRAG;
   drag_data->source_track = track;
   drag_data->target_track = track;
   drag_data->clip = clip;
@@ -757,6 +849,113 @@ static wmOperatorStatus better_timeline_clip_drag_modal(bContext *C,
   return OPERATOR_RUNNING_MODAL;
 }
 
+static wmOperatorStatus better_timeline_clip_box_select_modal(bContext *C,
+                                                              wmOperator *op,
+                                                              const wmEvent *event)
+{
+  ScrArea *area = CTX_wm_area(C);
+  ARegion *region = CTX_wm_region(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+  auto *box_select_data = static_cast<BetterTimelineClipBoxSelectData *>(op->customdata);
+  if (box_select_data == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  auto update_visual_rect = [&]() {
+    rcti selection_rect{};
+    if (better_timeline_clip_box_select_rect_get(region,
+                                                 sbetter_timeline,
+                                                 box_select_data->initial_mouse_x,
+                                                 box_select_data->initial_mouse_y,
+                                                 box_select_data->current_mouse_x,
+                                                 box_select_data->current_mouse_y,
+                                                 &selection_rect))
+    {
+      better_timeline_clip_box_select_visual_state_update(region, selection_rect);
+    }
+    else {
+      better_timeline_clip_box_select_visual_state_clear();
+    }
+  };
+
+  switch (event->type) {
+    case MOUSEMOVE: {
+      box_select_data->current_mouse_x = event->mval[0];
+      box_select_data->current_mouse_y = event->mval[1];
+
+      if (!box_select_data->active) {
+        const int drag_delta[2] = {box_select_data->current_mouse_x - box_select_data->initial_mouse_x,
+                                   box_select_data->current_mouse_y -
+                                       box_select_data->initial_mouse_y};
+        box_select_data->active = WM_event_drag_test_with_delta(event, drag_delta);
+      }
+
+      if (box_select_data->active) {
+        update_visual_rect();
+        ED_area_tag_redraw(area);
+      }
+      break;
+    }
+    case LEFTMOUSE:
+      if (event->val == KM_RELEASE) {
+        box_select_data->current_mouse_x = event->mval[0];
+        box_select_data->current_mouse_y = event->mval[1];
+
+        if (box_select_data->active) {
+          rcti selection_rect{};
+          if (better_timeline_clip_box_select_rect_get(region,
+                                                       sbetter_timeline,
+                                                       box_select_data->initial_mouse_x,
+                                                       box_select_data->initial_mouse_y,
+                                                       box_select_data->current_mouse_x,
+                                                       box_select_data->current_mouse_y,
+                                                       &selection_rect))
+          {
+            better_timeline_clip_box_select_apply(
+                C, selection_rect, box_select_data->extend, box_select_data->toggle);
+          }
+        }
+        else {
+          better_timeline_track_select_click_invoke(C, event);
+        }
+
+        better_timeline_clip_box_select_finish(C, op);
+        return OPERATOR_FINISHED;
+      }
+      break;
+    case RIGHTMOUSE:
+    case EVT_ESCKEY:
+      if (event->type == EVT_ESCKEY || event->val == KM_PRESS) {
+        better_timeline_clip_box_select_finish(C, op);
+        return OPERATOR_CANCELLED;
+      }
+      break;
+    default:
+      break;
+  }
+
+  return OPERATOR_RUNNING_MODAL;
+}
+
+static wmOperatorStatus better_timeline_clip_interaction_modal(bContext *C,
+                                                               wmOperator *op,
+                                                               const wmEvent *event)
+{
+  auto *interaction_data = static_cast<BetterTimelineClipInteractionData *>(op->customdata);
+  if (interaction_data == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  switch (interaction_data->interaction_mode) {
+    case BETTER_TIMELINE_CLIP_INTERACTION_DRAG:
+      return better_timeline_clip_drag_modal(C, op, event);
+    case BETTER_TIMELINE_CLIP_INTERACTION_BOX_SELECT:
+      return better_timeline_clip_box_select_modal(C, op, event);
+  }
+
+  return OPERATOR_CANCELLED;
+}
+
 static wmOperatorStatus better_timeline_clip_drag_invoke(bContext *C,
                                                          wmOperator *op,
                                                          const wmEvent *event)
@@ -778,7 +977,19 @@ static wmOperatorStatus better_timeline_clip_drag_invoke(bContext *C,
   BetterTimelineClip *clip = better_timeline_clip_from_region_position(
       region, sbetter_timeline, event->mval[0], event->mval[1], &track);
   if (clip == nullptr || track == nullptr) {
-    return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
+    auto *box_select_data = MEM_new<BetterTimelineClipBoxSelectData>(__func__);
+    box_select_data->interaction_mode = BETTER_TIMELINE_CLIP_INTERACTION_BOX_SELECT;
+    box_select_data->initial_mouse_x = event->mval[0];
+    box_select_data->initial_mouse_y = event->mval[1];
+    box_select_data->current_mouse_x = event->mval[0];
+    box_select_data->current_mouse_y = event->mval[1];
+    box_select_data->active = false;
+    box_select_data->extend = shift;
+    box_select_data->toggle = oskey;
+
+    op->customdata = box_select_data;
+    WM_event_add_modal_handler(C, op);
+    return OPERATOR_RUNNING_MODAL;
   }
 
   if (shift || oskey) {
@@ -799,7 +1010,7 @@ static void BETTER_TIMELINE_OT_clip_drag(wmOperatorType *ot)
   ot->description = "Move a Better Timeline clip between frames and compatible tracks";
 
   ot->invoke = better_timeline_clip_drag_invoke;
-  ot->modal = better_timeline_clip_drag_modal;
+  ot->modal = better_timeline_clip_interaction_modal;
   ot->poll = better_timeline_clip_drag_poll;
 
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO | OPTYPE_BLOCKING;

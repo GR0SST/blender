@@ -113,6 +113,7 @@ class BetterTimelineButtonsPanel:
 class BetterTimelineSidebarPanel:
     bl_space_type = 'BETTER_TIMELINE'
     bl_region_type = 'UI'
+    bl_category = "Item"
 
 
 class BETTER_TIMELINE_HT_header(Header):

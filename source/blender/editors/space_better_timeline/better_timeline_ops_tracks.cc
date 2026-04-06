@@ -101,9 +101,7 @@ static bool better_timeline_track_select_poll(bContext *C)
   return better_timeline_operator_region_poll(C);
 }
 
-static wmOperatorStatus better_timeline_track_select_invoke(bContext *C,
-                                                            wmOperator * /*op*/,
-                                                            const wmEvent *event)
+wmOperatorStatus better_timeline_track_select_click_invoke(bContext *C, const wmEvent *event)
 {
   ScrArea *area = CTX_wm_area(C);
   ARegion *region = CTX_wm_region(C);
@@ -213,6 +211,13 @@ static wmOperatorStatus better_timeline_track_select_invoke(bContext *C,
   }
 
   return OPERATOR_FINISHED;
+}
+
+static wmOperatorStatus better_timeline_track_select_invoke(bContext *C,
+                                                            wmOperator * /*op*/,
+                                                            const wmEvent *event)
+{
+  return better_timeline_track_select_click_invoke(C, event);
 }
 
 static void BETTER_TIMELINE_OT_track_select(wmOperatorType *ot)

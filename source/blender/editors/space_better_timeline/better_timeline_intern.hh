@@ -89,6 +89,21 @@ struct BetterTimelineClipDragVisualState {
   bool active;
 };
 
+struct BetterTimelineClipBoxSelectVisualState {
+  const ARegion *region;
+  rcti rect;
+  bool active;
+};
+
+enum eBetterTimelineClipInteractionMode {
+  BETTER_TIMELINE_CLIP_INTERACTION_DRAG = 0,
+  BETTER_TIMELINE_CLIP_INTERACTION_BOX_SELECT = 1,
+};
+
+struct BetterTimelineClipInteractionData {
+  eBetterTimelineClipInteractionMode interaction_mode;
+};
+
 struct BetterTimelineMovedClipState {
   BetterTimelineTrack *source_track;
   BetterTimelineClip *clip;
@@ -106,6 +121,7 @@ struct BetterTimelineUndoState {
 };
 
 struct BetterTimelineClipDragData {
+  eBetterTimelineClipInteractionMode interaction_mode;
   BetterTimelineTrack *source_track;
   BetterTimelineTrack *target_track;
   BetterTimelineClip *clip;
@@ -119,6 +135,17 @@ struct BetterTimelineClipDragData {
   bool allow_track_change;
   bool remove_on_cancel;
   int last_mouse_y;
+};
+
+struct BetterTimelineClipBoxSelectData {
+  eBetterTimelineClipInteractionMode interaction_mode;
+  int initial_mouse_x;
+  int initial_mouse_y;
+  int current_mouse_x;
+  int current_mouse_y;
+  bool active;
+  bool extend;
+  bool toggle;
 };
 
 struct BetterTimelineUndoStep {
@@ -214,6 +241,8 @@ void better_timeline_clip_drag_visual_state_update(const ARegion *region,
                                                    bool drop_valid);
 void better_timeline_clip_drag_visual_state_clear();
 bool better_timeline_clip_drag_visual_state_is_dragged_clip(const BetterTimelineClip *clip);
+void better_timeline_clip_box_select_visual_state_update(const ARegion *region, const rcti &rect);
+void better_timeline_clip_box_select_visual_state_clear();
 bool better_timeline_operator_region_poll(bContext *C);
 void better_timeline_view_ops_register();
 void better_timeline_main_region_keymap_init(wmWindowManager *wm, ARegion *region);
@@ -221,6 +250,7 @@ void better_timeline_track_ops_register();
 void better_timeline_clip_ops_register();
 void better_timeline_clipboard_track_ops_register();
 void better_timeline_clipboard_clip_ops_register();
+wmOperatorStatus better_timeline_track_select_click_invoke(bContext *C, const wmEvent *event);
 void better_timeline_main_region_draw(const bContext *C, ARegion *region);
 void better_timeline_main_region_draw_overlay(const bContext *C, ARegion *region);
 void better_timeline_main_region_listener(const wmRegionListenerParams *params);
