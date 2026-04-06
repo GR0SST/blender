@@ -251,7 +251,8 @@ static void better_timeline_track_reorder_finish(bContext *C, wmOperator *op)
     reorder_data->autoscroll_timer = nullptr;
   }
 
-  better_timeline_track_drag_visual_state_clear();
+  better_timeline_track_drag_visual_state_clear(
+      static_cast<SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first));
   WM_cursor_modal_restore(win);
   MEM_delete(reorder_data);
   op->customdata = nullptr;
@@ -281,7 +282,7 @@ static wmOperatorStatus better_timeline_track_reorder_modal(bContext *C,
       reorder_data->current_insertion_index = better_timeline_track_insertion_index_from_region_y(
           region, sbetter_timeline, reorder_data->last_mouse_y);
       better_timeline_track_drag_visual_state_update(
-          region, reorder_data->dragged_track, reorder_data->current_insertion_index);
+          sbetter_timeline, region, reorder_data->dragged_track, reorder_data->current_insertion_index);
       ED_area_tag_redraw(area);
       break;
     }
@@ -297,7 +298,10 @@ static wmOperatorStatus better_timeline_track_reorder_modal(bContext *C,
         reorder_data->current_insertion_index = better_timeline_track_insertion_index_from_region_y(
             region, sbetter_timeline, reorder_data->last_mouse_y);
         better_timeline_track_drag_visual_state_update(
-            region, reorder_data->dragged_track, reorder_data->current_insertion_index);
+            sbetter_timeline,
+            region,
+            reorder_data->dragged_track,
+            reorder_data->current_insertion_index);
         ED_area_tag_redraw(area);
       }
       break;
@@ -386,7 +390,7 @@ static wmOperatorStatus better_timeline_track_reorder_invoke(bContext *C,
   op->customdata = reorder_data;
 
   better_timeline_track_drag_visual_state_update(
-      region, dragged_track, reorder_data->current_insertion_index);
+      sbetter_timeline, region, dragged_track, reorder_data->current_insertion_index);
   WM_cursor_modal_set(CTX_wm_window(C), WM_CURSOR_Y_MOVE);
   WM_event_add_modal_handler(C, op);
   ED_area_tag_redraw(area);

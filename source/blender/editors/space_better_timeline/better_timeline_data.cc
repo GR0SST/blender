@@ -34,6 +34,13 @@
 
 namespace blender {
 
+static void better_timeline_space_runtime_ensure(SpaceBetterTimeline *sbetter_timeline)
+{
+  if (sbetter_timeline != nullptr && sbetter_timeline->runtime == nullptr) {
+    sbetter_timeline->runtime = MEM_new<SpaceBetterTimeline_Runtime>(__func__);
+  }
+}
+
 static void better_timeline_clips_free(ListBase *clips)
 {
   if (clips == nullptr) {
@@ -294,7 +301,7 @@ static void better_timeline_undosys_step_decode(
 
   better_timeline_state_restore(
       us->space, (dir == STEP_UNDO) ? &us->state_before : &us->state_after);
-  better_timeline_track_drag_visual_state_clear();
+  better_timeline_track_drag_visual_state_clear(us->space);
   WM_event_add_notifier(C, NC_SCREEN | NA_EDITED, nullptr);
 }
 
@@ -311,12 +318,21 @@ void better_timeline_space_state_init(SpaceBetterTimeline *sbetter_timeline)
     return;
   }
 
+  better_timeline_space_runtime_ensure(sbetter_timeline);
   sbetter_timeline->selected_track_index = -1;
   sbetter_timeline->selected_clip_index = -1;
   sbetter_timeline->next_track_name_index = 1;
   sbetter_timeline->track_panel_width = 0;
   sbetter_timeline->track_scroll_offset = 0;
   ed::better_timeline::register_builtin_types();
+}
+
+void better_timeline_space_runtime_free(SpaceBetterTimeline *sbetter_timeline)
+{
+  if (sbetter_timeline == nullptr) {
+    return;
+  }
+  MEM_SAFE_DELETE(sbetter_timeline->runtime);
 }
 
 bool better_timeline_track_is_selected(const BetterTimelineTrack *track)
@@ -970,6 +986,7 @@ BetterTimelineClip *better_timeline_clip_at_global_index(SpaceBetterTimeline *sb
 void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
 {
   auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
+  sbetter_timeline->runtime = MEM_new<SpaceBetterTimeline_Runtime>(__func__);
   ed::better_timeline::register_builtin_types();
 
   BLO_read_struct_list(reader, BetterTimelineTrack, &sbetter_timeline->tracks);

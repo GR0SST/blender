@@ -95,6 +95,12 @@ struct BetterTimelineClipBoxSelectVisualState {
   bool active;
 };
 
+struct SpaceBetterTimeline_Runtime {
+  BetterTimelineTrackDragVisualState track_drag_visual_state;
+  BetterTimelineClipDragVisualState clip_drag_visual_state;
+  BetterTimelineClipBoxSelectVisualState clip_box_select_visual_state;
+};
+
 enum eBetterTimelineClipInteractionMode {
   BETTER_TIMELINE_CLIP_INTERACTION_DRAG = 0,
   BETTER_TIMELINE_CLIP_INTERACTION_BOX_SELECT = 1,
@@ -226,11 +232,13 @@ bool better_timeline_track_reorder_autoscroll_apply(
 float better_timeline_track_insertion_y(const ARegion *region,
                                         const SpaceBetterTimeline *sbetter_timeline,
                                         int insertion_index);
-void better_timeline_track_drag_visual_state_update(const ARegion *region,
+void better_timeline_track_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                    const ARegion *region,
                                                     const BetterTimelineTrack *dragged_track,
                                                     int insertion_index);
-void better_timeline_track_drag_visual_state_clear();
-void better_timeline_clip_drag_visual_state_update(const ARegion *region,
+void better_timeline_track_drag_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
+void better_timeline_clip_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                   const ARegion *region,
                                                    const BetterTimelineTrack *source_track,
                                                    const BetterTimelineTrack *target_track,
                                                    const BetterTimelineClip *dragged_clip,
@@ -239,10 +247,13 @@ void better_timeline_clip_drag_visual_state_update(const ARegion *region,
                                                    float preview_start_frame,
                                                    float preview_end_frame,
                                                    bool drop_valid);
-void better_timeline_clip_drag_visual_state_clear();
-bool better_timeline_clip_drag_visual_state_is_dragged_clip(const BetterTimelineClip *clip);
-void better_timeline_clip_box_select_visual_state_update(const ARegion *region, const rcti &rect);
-void better_timeline_clip_box_select_visual_state_clear();
+void better_timeline_clip_drag_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
+bool better_timeline_clip_drag_visual_state_is_dragged_clip(
+    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineClip *clip);
+void better_timeline_clip_box_select_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                         const ARegion *region,
+                                                         const rcti &rect);
+void better_timeline_clip_box_select_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
 bool better_timeline_operator_region_poll(bContext *C);
 void better_timeline_view_ops_register();
 void better_timeline_main_region_keymap_init(wmWindowManager *wm, ARegion *region);
@@ -255,6 +266,7 @@ void better_timeline_main_region_draw(const bContext *C, ARegion *region);
 void better_timeline_main_region_draw_overlay(const bContext *C, ARegion *region);
 void better_timeline_main_region_listener(const wmRegionListenerParams *params);
 void better_timeline_space_state_init(SpaceBetterTimeline *sbetter_timeline);
+void better_timeline_space_runtime_free(SpaceBetterTimeline *sbetter_timeline);
 bool better_timeline_track_is_selected(const BetterTimelineTrack *track);
 void better_timeline_track_set_selected(BetterTimelineTrack *track, bool selected);
 BetterTimelineTrack *better_timeline_track_at_index(SpaceBetterTimeline *sbetter_timeline,

@@ -47,6 +47,7 @@ struct bNodeTree;
 struct wmOperator;
 struct wmTimer;
 struct SpaceUserPref_Runtime;
+struct SpaceBetterTimeline_Runtime;
 
 namespace asset_system {
 class AssetRepresentation;
@@ -1098,6 +1099,8 @@ struct SpaceBetterTimeline {
   int track_panel_width = 0;
   int track_scroll_offset = 0;
   int _pad1 = 0;
+
+  SpaceBetterTimeline_Runtime *runtime = nullptr;
 };
 
 /** \} */

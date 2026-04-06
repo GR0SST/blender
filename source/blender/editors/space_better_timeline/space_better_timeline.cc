@@ -71,6 +71,7 @@ static void better_timeline_free(SpaceLink *sl)
 {
   auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
   better_timeline_tracks_free(&sbetter_timeline->tracks);
+  better_timeline_space_runtime_free(sbetter_timeline);
 }
 
 static void better_timeline_init(wmWindowManager * /*wm*/, ScrArea * /*area*/) {}
@@ -79,6 +80,7 @@ static SpaceLink *better_timeline_duplicate(SpaceLink *sl)
 {
   SpaceBetterTimeline *sbetter_timeline = MEM_dupalloc(
       reinterpret_cast<SpaceBetterTimeline *>(sl));
+  sbetter_timeline->runtime = MEM_new<SpaceBetterTimeline_Runtime>(__func__);
   BLI_listbase_clear(&sbetter_timeline->tracks);
   better_timeline_tracks_duplicate(&sbetter_timeline->tracks,
                                    &reinterpret_cast<SpaceBetterTimeline *>(sl)->tracks);

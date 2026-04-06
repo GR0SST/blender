@@ -561,7 +561,8 @@ static bool better_timeline_clip_drag_poll(bContext *C)
 static void better_timeline_clip_box_select_finish(bContext *C, wmOperator *op)
 {
   auto *box_select_data = static_cast<BetterTimelineClipBoxSelectData *>(op->customdata);
-  better_timeline_clip_box_select_visual_state_clear();
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first);
+  better_timeline_clip_box_select_visual_state_clear(sbetter_timeline);
   if (box_select_data != nullptr) {
     MEM_delete(box_select_data);
     op->customdata = nullptr;
@@ -624,7 +625,8 @@ static void better_timeline_clip_drag_finish(
     better_timeline_tag_space_state_changed(C);
   }
 
-  better_timeline_clip_drag_visual_state_clear();
+  better_timeline_clip_drag_visual_state_clear(static_cast<SpaceBetterTimeline *>(
+      CTX_wm_area(C)->spacedata.first));
   if (restore_cursor) {
     WM_cursor_modal_restore(CTX_wm_window(C));
   }
@@ -727,6 +729,7 @@ static bool better_timeline_clip_drag_start(bContext *C,
   const Vector<const BetterTimelineTrack *> moved_clip_tracks = better_timeline_drag_preview_tracks(
       *drag_data);
   better_timeline_clip_drag_visual_state_update(
+      sbetter_timeline,
       region,
       track,
       track,
@@ -805,7 +808,8 @@ static wmOperatorStatus better_timeline_clip_drag_modal(bContext *C,
     const Vector<const BetterTimelineClip *> moved_clips = better_timeline_dragged_clip_ptrs(*drag_data);
     const Vector<const BetterTimelineTrack *> moved_clip_tracks = better_timeline_drag_preview_tracks(
         *drag_data);
-    better_timeline_clip_drag_visual_state_update(region,
+    better_timeline_clip_drag_visual_state_update(sbetter_timeline,
+                                                  region,
                                                   drag_data->source_track,
                                                   target_track,
                                                   drag_data->clip,
@@ -871,10 +875,11 @@ static wmOperatorStatus better_timeline_clip_box_select_modal(bContext *C,
                                                  box_select_data->current_mouse_y,
                                                  &selection_rect))
     {
-      better_timeline_clip_box_select_visual_state_update(region, selection_rect);
+      better_timeline_clip_box_select_visual_state_update(
+          sbetter_timeline, region, selection_rect);
     }
     else {
-      better_timeline_clip_box_select_visual_state_clear();
+      better_timeline_clip_box_select_visual_state_clear(sbetter_timeline);
     }
   };
 

@@ -47,17 +47,10 @@ struct BetterTimelineClipState {
   int scissor[4];
 };
 
-static BetterTimelineTrackDragVisualState g_better_timeline_track_drag_visual_state = {
-    nullptr, nullptr, -1, false};
-static BetterTimelineClipBoxSelectVisualState g_better_timeline_clip_box_select_visual_state = {
-    nullptr, {0, 0, 0, 0}, false};
-
-static BetterTimelineClipDragVisualState &better_timeline_clip_drag_visual_state_storage()
+static SpaceBetterTimeline_Runtime *better_timeline_runtime_get(
+    const SpaceBetterTimeline *sbetter_timeline)
 {
-  /* Intentionally leaked to avoid destructor/shutdown order problems with guarded allocations. */
-  static BetterTimelineClipDragVisualState *state = new BetterTimelineClipDragVisualState{
-      nullptr, nullptr, nullptr, nullptr, {}, {}, 0.0f, 0.0f, false, false};
-  return *state;
+  return (sbetter_timeline != nullptr) ? sbetter_timeline->runtime : nullptr;
 }
 
 static void better_timeline_clip_begin(const ARegion *region,
@@ -465,7 +458,8 @@ static void better_timeline_draw_clip_label(const BetterTimelineClip *clip,
                    BLF_DRAW_STR_DUMMY_MAX);
 }
 
-void better_timeline_clip_drag_visual_state_update(const ARegion *region,
+void better_timeline_clip_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                   const ARegion *region,
                                                    const BetterTimelineTrack *source_track,
                                                    const BetterTimelineTrack *target_track,
                                                    const BetterTimelineClip *dragged_clip,
@@ -475,7 +469,12 @@ void better_timeline_clip_drag_visual_state_update(const ARegion *region,
                                                    const float preview_end_frame,
                                                    const bool drop_valid)
 {
-  BetterTimelineClipDragVisualState &state = better_timeline_clip_drag_visual_state_storage();
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return;
+  }
+
+  BetterTimelineClipDragVisualState &state = runtime->clip_drag_visual_state;
   state.region = region;
   state.source_track = source_track;
   state.target_track = target_track;
@@ -490,9 +489,14 @@ void better_timeline_clip_drag_visual_state_update(const ARegion *region,
   state.active = true;
 }
 
-void better_timeline_clip_drag_visual_state_clear()
+void better_timeline_clip_drag_visual_state_clear(SpaceBetterTimeline *sbetter_timeline)
 {
-  BetterTimelineClipDragVisualState &state = better_timeline_clip_drag_visual_state_storage();
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return;
+  }
+
+  BetterTimelineClipDragVisualState &state = runtime->clip_drag_visual_state;
   state.region = nullptr;
   state.source_track = nullptr;
   state.target_track = nullptr;
@@ -505,36 +509,55 @@ void better_timeline_clip_drag_visual_state_clear()
   state.active = false;
 }
 
-bool better_timeline_clip_drag_visual_state_is_dragged_clip(const BetterTimelineClip *clip)
+bool better_timeline_clip_drag_visual_state_is_dragged_clip(const SpaceBetterTimeline *sbetter_timeline,
+                                                            const BetterTimelineClip *clip)
 {
-  const BetterTimelineClipDragVisualState &state = better_timeline_clip_drag_visual_state_storage();
+  const SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return false;
+  }
+
+  const BetterTimelineClipDragVisualState &state = runtime->clip_drag_visual_state;
   return state.active && state.moved_clips.contains(clip);
 }
 
-void better_timeline_clip_box_select_visual_state_update(const ARegion *region, const rcti &rect)
+void better_timeline_clip_box_select_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                         const ARegion *region,
+                                                         const rcti &rect)
 {
-  g_better_timeline_clip_box_select_visual_state.region = region;
-  g_better_timeline_clip_box_select_visual_state.rect = rect;
-  g_better_timeline_clip_box_select_visual_state.active = true;
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return;
+  }
+
+  runtime->clip_box_select_visual_state.region = region;
+  runtime->clip_box_select_visual_state.rect = rect;
+  runtime->clip_box_select_visual_state.active = true;
 }
 
-void better_timeline_clip_box_select_visual_state_clear()
+void better_timeline_clip_box_select_visual_state_clear(SpaceBetterTimeline *sbetter_timeline)
 {
-  g_better_timeline_clip_box_select_visual_state.region = nullptr;
-  g_better_timeline_clip_box_select_visual_state.rect = {0, 0, 0, 0};
-  g_better_timeline_clip_box_select_visual_state.active = false;
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return;
+  }
+
+  runtime->clip_box_select_visual_state.region = nullptr;
+  runtime->clip_box_select_visual_state.rect = {0, 0, 0, 0};
+  runtime->clip_box_select_visual_state.active = false;
 }
 
 static void better_timeline_draw_clip_box_select_overlay(
     const ARegion *region, const SpaceBetterTimeline *sbetter_timeline)
 {
-  if (!g_better_timeline_clip_box_select_visual_state.active ||
-      g_better_timeline_clip_box_select_visual_state.region != region)
+  const SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr || !runtime->clip_box_select_visual_state.active ||
+      runtime->clip_box_select_visual_state.region != region)
   {
     return;
   }
 
-  rcti rect = g_better_timeline_clip_box_select_visual_state.rect;
+  rcti rect = runtime->clip_box_select_visual_state.rect;
   const rcti body_rect = better_timeline_body_rect(region, sbetter_timeline);
   if (!BLI_rcti_isect(&rect, &body_rect, &rect)) {
     return;
@@ -591,8 +614,11 @@ static void better_timeline_draw_clips(const ARegion *region,
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
   const int track_count = better_timeline_track_count(sbetter_timeline);
-  BetterTimelineClipDragVisualState &clip_drag_state = better_timeline_clip_drag_visual_state_storage();
-  const bool clip_drag_active = clip_drag_state.active && clip_drag_state.region == region;
+  const SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  const BetterTimelineClipDragVisualState *clip_drag_state =
+      (runtime != nullptr) ? &runtime->clip_drag_visual_state : nullptr;
+  const bool clip_drag_active = clip_drag_state != nullptr && clip_drag_state->active &&
+                                clip_drag_state->region == region;
   for (int row_index = 0; row_index < track_count; row_index++) {
     if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
       continue;
@@ -612,7 +638,9 @@ static void better_timeline_draw_clips(const ARegion *region,
          clip != nullptr;
          clip = clip->next)
     {
-      if (clip_drag_active && better_timeline_clip_drag_visual_state_is_dragged_clip(clip)) {
+      if (clip_drag_active &&
+          better_timeline_clip_drag_visual_state_is_dragged_clip(sbetter_timeline, clip))
+      {
         continue;
       }
 
@@ -662,14 +690,18 @@ static void better_timeline_draw_clips(const ARegion *region,
          clip != nullptr;
          clip = clip->next)
     {
-      if (clip_drag_active && better_timeline_clip_drag_visual_state_is_dragged_clip(clip)) {
+      if (clip_drag_active &&
+          better_timeline_clip_drag_visual_state_is_dragged_clip(sbetter_timeline, clip))
+      {
         continue;
       }
 
       for (const BetterTimelineClip *other_clip = clip->next; other_clip != nullptr;
            other_clip = other_clip->next)
       {
-        if (clip_drag_active && better_timeline_clip_drag_visual_state_is_dragged_clip(other_clip)) {
+        if (clip_drag_active &&
+            better_timeline_clip_drag_visual_state_is_dragged_clip(sbetter_timeline, other_clip))
+        {
           continue;
         }
 
@@ -681,12 +713,12 @@ static void better_timeline_draw_clips(const ARegion *region,
     }
   }
 
-  if (clip_drag_active && clip_drag_state.dragged_clip != nullptr) {
-    const float frame_delta = clip_drag_state.preview_start_frame -
-                              clip_drag_state.dragged_clip->start_frame;
-    for (int i = 0; i < clip_drag_state.moved_clips.size(); i++) {
-      const BetterTimelineClip *clip = clip_drag_state.moved_clips[i];
-      const BetterTimelineTrack *preview_track = clip_drag_state.moved_clip_tracks[i];
+  if (clip_drag_active && clip_drag_state->dragged_clip != nullptr) {
+    const float frame_delta = clip_drag_state->preview_start_frame -
+                              clip_drag_state->dragged_clip->start_frame;
+    for (int i = 0; i < clip_drag_state->moved_clips.size(); i++) {
+      const BetterTimelineClip *clip = clip_drag_state->moved_clips[i];
+      const BetterTimelineTrack *preview_track = clip_drag_state->moved_clip_tracks[i];
       const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
       if (row_index < 0) {
         continue;
@@ -707,7 +739,7 @@ static void better_timeline_draw_clips(const ARegion *region,
 
       float clip_color[4];
       better_timeline_clip_color_get(clip, clip_color);
-      if (!clip_drag_state.drop_valid) {
+      if (!clip_drag_state->drop_valid) {
         clip_color[0] = 0.86f;
         clip_color[1] = 0.24f;
         clip_color[2] = 0.24f;
@@ -736,9 +768,9 @@ static void better_timeline_draw_clips(const ARegion *region,
           clip, start_x, end_x, snapped_clip_y_min, snapped_clip_y_max);
     }
 
-    for (int i = 0; i < clip_drag_state.moved_clips.size(); i++) {
-      const BetterTimelineClip *preview_clip = clip_drag_state.moved_clips[i];
-      const BetterTimelineTrack *preview_track = clip_drag_state.moved_clip_tracks[i];
+    for (int i = 0; i < clip_drag_state->moved_clips.size(); i++) {
+      const BetterTimelineClip *preview_clip = clip_drag_state->moved_clips[i];
+      const BetterTimelineTrack *preview_track = clip_drag_state->moved_clip_tracks[i];
       const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
       if (row_index < 0) {
         continue;
@@ -755,7 +787,7 @@ static void better_timeline_draw_clips(const ARegion *region,
            other_clip != nullptr;
            other_clip = other_clip->next)
       {
-        if (better_timeline_clip_drag_visual_state_is_dragged_clip(other_clip)) {
+        if (better_timeline_clip_drag_visual_state_is_dragged_clip(sbetter_timeline, other_clip)) {
           continue;
         }
 
@@ -771,9 +803,9 @@ static void better_timeline_draw_clips(const ARegion *region,
                                                    pos);
       }
 
-      for (int j = i + 1; j < clip_drag_state.moved_clips.size(); j++) {
-        const BetterTimelineClip *other_preview_clip = clip_drag_state.moved_clips[j];
-        const BetterTimelineTrack *other_preview_track = clip_drag_state.moved_clip_tracks[j];
+      for (int j = i + 1; j < clip_drag_state->moved_clips.size(); j++) {
+        const BetterTimelineClip *other_preview_clip = clip_drag_state->moved_clips[j];
+        const BetterTimelineTrack *other_preview_track = clip_drag_state->moved_clip_tracks[j];
         if (preview_track != other_preview_track) {
           continue;
         }
@@ -799,22 +831,31 @@ static void better_timeline_draw_clips(const ARegion *region,
   better_timeline_clip_end(clip_state);
 }
 
-void better_timeline_track_drag_visual_state_update(const ARegion *region,
+void better_timeline_track_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                    const ARegion *region,
                                                     const BetterTimelineTrack *dragged_track,
                                                     const int insertion_index)
 {
-  g_better_timeline_track_drag_visual_state.region = region;
-  g_better_timeline_track_drag_visual_state.dragged_track = dragged_track;
-  g_better_timeline_track_drag_visual_state.insertion_index = insertion_index;
-  g_better_timeline_track_drag_visual_state.active = true;
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return;
+  }
+  runtime->track_drag_visual_state.region = region;
+  runtime->track_drag_visual_state.dragged_track = dragged_track;
+  runtime->track_drag_visual_state.insertion_index = insertion_index;
+  runtime->track_drag_visual_state.active = true;
 }
 
-void better_timeline_track_drag_visual_state_clear()
+void better_timeline_track_drag_visual_state_clear(SpaceBetterTimeline *sbetter_timeline)
 {
-  g_better_timeline_track_drag_visual_state.region = nullptr;
-  g_better_timeline_track_drag_visual_state.dragged_track = nullptr;
-  g_better_timeline_track_drag_visual_state.insertion_index = -1;
-  g_better_timeline_track_drag_visual_state.active = false;
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return;
+  }
+  runtime->track_drag_visual_state.region = nullptr;
+  runtime->track_drag_visual_state.dragged_track = nullptr;
+  runtime->track_drag_visual_state.insertion_index = -1;
+  runtime->track_drag_visual_state.active = false;
 }
 
 static void better_timeline_draw_layout_overlay(const ARegion *region,
@@ -823,11 +864,13 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
   const int left_panel_width = better_timeline_left_panel_width(region, sbetter_timeline);
   const int content_top = better_timeline_content_height(region);
   const int track_count = better_timeline_track_count(sbetter_timeline);
-  const bool drag_active = g_better_timeline_track_drag_visual_state.active &&
-                           g_better_timeline_track_drag_visual_state.region == region;
-  const BetterTimelineTrack *dragged_track = drag_active ?
-                                                 g_better_timeline_track_drag_visual_state.dragged_track :
-                                                 nullptr;
+  const SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  const BetterTimelineTrackDragVisualState *track_drag_state =
+      (runtime != nullptr) ? &runtime->track_drag_visual_state : nullptr;
+  const bool drag_active = track_drag_state != nullptr && track_drag_state->active &&
+                           track_drag_state->region == region;
+  const BetterTimelineTrack *dragged_track = drag_active ? track_drag_state->dragged_track :
+                                                           nullptr;
   const int dragged_track_index = drag_active ?
                                       better_timeline_track_index_from_ptr(sbetter_timeline,
                                                                            dragged_track) :
@@ -927,7 +970,7 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
 
   if (drag_active && dragged_track_index >= 0) {
     const float insertion_y = better_timeline_track_insertion_y(
-        region, sbetter_timeline, g_better_timeline_track_drag_visual_state.insertion_index);
+        region, sbetter_timeline, track_drag_state->insertion_index);
 
     immUniformColor4f(
         insertion_color[0], insertion_color[1], insertion_color[2], 0.95f);
