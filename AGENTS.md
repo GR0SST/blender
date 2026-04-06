@@ -4,7 +4,8 @@ This fork adds a custom editor type named `Better Timeline` on top of `blender-v
 
 Terminology for this editor:
 - `Track List Pane`: the left-side pane that shows track names and, later, track type/status UI.
-- `Timeline Canvas`: the right-side pane that shows the time ruler, playhead, grid, and later clips.
+- `Timeline Canvas`: the central pane that shows the time ruler, playhead, grid, and later clips.
+- `Properties Pane`: the right-side sidebar opened with `N`; it shows editable properties for the active Better Timeline selection.
 - `Splitter`: the resizable divider between `Track List Pane` and `Timeline Canvas`.
 
 Current behavior:
@@ -12,6 +13,9 @@ Current behavior:
 - The editor uses a clip-oriented custom header with playback and marker controls, but avoids keyframe-specific timeline UI.
 - The main region now has a Unity-like shell: left track-side panel, top ruler strip, playhead, frame grid, and shaded areas outside the scene frame range.
 - `Track List Pane` now starts empty and exposes a `+` button in its top strip; clicking it appends a new track, assigns its name once at creation time (`Track1`, `Track2`, ...), and selects it.
+- `Properties Pane` is now a real Blender `UI` sidebar region, not a manually drawn fake panel inside the window region.
+- `N` toggles the `Properties Pane` through the standard sidebar region path; future work should keep using the real `RGN_TYPE_UI` region instead of reintroducing custom-drawn sidebar content in the window region.
+- When a clip is active, the `Properties Pane` exposes editable `Name`, `Start`, `End`, and `Duration`. It intentionally does not show the owning track field in the clip properties panel.
 - There are still no real clip editing interactions yet, but the underlying data model is now typed and clip-capable; track rows are no longer meant to be treated as untyped placeholders in architecture decisions.
 
 Primary files for this editor:
@@ -37,10 +41,9 @@ What each file is for:
 - `anim_ops.cc`: shared frame-change/scrubbing operator logic; Better Timeline has to be explicitly allowed there for the ruler to be interactive.
 - `ED_space_api.hh` and `spacetypes.cc`: global editor-type registration on startup.
 - `DNA_space_enums.h` and `DNA_space_types.h`: persistent space id, DNA structs for `SpaceBetterTimeline`, typed `BetterTimelineTrack`, and typed `BetterTimelineClip`.
-- `rna_space.cc`: editor selector menu entry and UI-facing label/icon.
+- `rna_space.cc`: editor selector menu entry, UI-facing label/icon, and Better Timeline RNA for active selection/sidebar editing.
 - `rna_ui.cc`: runtime RNA registration hooks for addon-defined Better Timeline `TrackType` and `ClipType`.
-- `space_better_timeline.py`: Python header UI, including the standard editor-type switch button.
-- `space_better_timeline.py`: Python header UI, menus, playback controls, and clip-oriented top bar behavior.
+- `space_better_timeline.py`: Python header UI, menus, playback controls, clip-oriented top bar behavior, and `Properties Pane` panels.
 - `bl_ui/__init__.py`: loads the Better Timeline UI module on startup.
 
 Typed data-model rules that must now be treated as foundational:
@@ -50,6 +53,7 @@ Typed data-model rules that must now be treated as foundational:
 - `BetterTimelineTrack::properties` and `BetterTimelineClip::properties` are the extensible payload roots for type-specific data. Do not replace the typed model with a single shapeless universal blob; common clip fields belong in the base DNA struct and type-specific payload belongs in these properties.
 - Compatibility between track types and clip types is a model/runtime rule, not a UI-only validation rule.
 - All clip-affecting operations must use the same centralized compatibility logic from the Better Timeline registry/API. This includes create clip, paste, duplicate, drag/drop between tracks, and future import/addon clip creation.
+- Inline property edits from the `Properties Pane` are clip-affecting operations too. Editing `Start`, `End`, or `Duration` must go through the same centralized placement/compatibility validation path used by other clip moves, not through blind direct DNA writes.
 - Do not scatter `if (track_type == ...)` decision logic across editor code. Add new behavior through the registry/model layer and query compatibility/capabilities from there.
 - A clip must not be inserted into an incompatible track type, and clip moves across track types must remain denied unless the destination track type explicitly accepts that clip type.
 - Addons are expected to be able to register new `TrackType` and `ClipType` descriptors at runtime, and custom track types may define compatibility through a centralized poll/callback rather than hardcoded lists.
@@ -79,6 +83,7 @@ Main drawing pieces already in use:
 - Playhead snapping is currently disabled for Better Timeline in `anim_ops.cc` until this editor has its own snap target/keylist logic.
 - Better Timeline tracks now persist in `SpaceBetterTimeline::tracks` as a DNA `ListBase`; do not regenerate track names from visual row order.
 - Better Timeline clips now persist per track in `BetterTimelineTrack::clips`; future clip work must treat those lists as authoritative.
+- Better Timeline now exposes `SpaceBetterTimeline.active_track` and `SpaceBetterTimeline.active_clip` through RNA for sidebar/UI work; prefer reading the active selection through that path for UI panels.
 - Track selection is now multi-select on `BetterTimelineTrack::selected`; `SpaceBetterTimeline::selected_track_index` is the active/anchor row for range selection and future context actions.
 - The next autogenerated track label is stored in `SpaceBetterTimeline::next_track_name_index`, so deleting/reordering rows must not rename existing tracks.
 - The left track column width is also stored in `SpaceBetterTimeline` as `track_panel_width`, so divider resize survives redraws and can later survive more custom layout work.
@@ -99,6 +104,7 @@ Main drawing pieces already in use:
 - If the track list does not need vertical scrolling, wheel events over `Track List Pane` should still be consumed there and must not fall through to `Timeline Canvas` zoom.
 - The right edge of the window now exposes a vertical track scrollbar; its thumb is driven by the same `track_scroll_offset` and is draggable through `BETTER_TIMELINE_OT_scrollbar_drag`.
 - The left/right divider resize uses `BETTER_TIMELINE_OT_resize_panel` on the same keymap and a window-region cursor callback; clicks on the divider must pass through track selection.
+- The `Properties Pane` width is owned by the real Blender sidebar region and should resize through normal `RGN_TYPE_UI` behavior. Do not add a second custom right-side splitter implementation for it unless there is a strong reason.
 - During divider drag, refresh `region->v2d.oldwinx/oldwiny` against the timeline-side mask width/height or Blender will treat the changing mask as a resize-zoom signal and keep zooming out every redraw.
 - Do not enable `V2D_KEEPZOOM` on the Better Timeline `View2D`. This editor should keep manual wheel zoom, but region/panel resize must not auto-zoom the timeline.
 - `ED_time_scrub_draw()` and `ED_time_scrub_draw_current_frame()` are region-wide by default. In Better Timeline they must be clipped to the right-side timeline rect, or the ruler/current-frame UI will bleed under the left track panel and the split will look like an overlay instead of two panes.
@@ -110,6 +116,7 @@ Likely future touchpoints for Better Timeline work:
 - Add operators and keymaps in `space_better_timeline.cc` or sibling files in the same folder.
 - Extend the type registry and typed clip/track runtime API in `better_timeline_types.cc` / `ED_better_timeline.hh`.
 - Add custom headers, panels, tools, or sub-modes by extending this editor's region types.
+- Extend the `Properties Pane` primarily through Python UI panels backed by RNA, and extend C++ RNA only when sidebar data or validation actually needs new API surface.
 - Evolve `space_better_timeline.py` toward a more Unity-style clip timeline header and transport bar.
 - Add real clip drawing, selection, editing, and drag/drop in `space_better_timeline.cc` or split that logic into dedicated sibling draw/operator files when it starts growing.
 - Add addon-visible typed behavior in `rna_ui.cc` if Better Timeline types need richer registration callbacks later.

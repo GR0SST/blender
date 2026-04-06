@@ -68,6 +68,11 @@ bool track_type_accepts_clip_type(const BetterTimelineTrackType &track_type,
 bool track_type_accepts_clip_type(StringRef track_type_idname, StringRef clip_type_idname);
 bool track_accepts_clip_type(const BetterTimelineTrack &track, StringRef clip_type_idname);
 bool track_accepts_clip(const BetterTimelineTrack &track, const BetterTimelineClip &clip);
+bool track_can_place_clip(const BetterTimelineTrack &track,
+                          StringRef clip_type_idname,
+                          float start_frame,
+                          float end_frame,
+                          const BetterTimelineClip *ignore_clip = nullptr);
 BetterTimelineClipBlendMode clip_type_blend_mode(const BetterTimelineClipType &clip_type);
 BetterTimelineClipBlendMode clip_type_blend_mode(StringRef clip_type_idname);
 bool clip_type_is_blendable(StringRef clip_type_idname);

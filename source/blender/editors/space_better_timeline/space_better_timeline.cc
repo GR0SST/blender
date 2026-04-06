@@ -19,8 +19,10 @@
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
 
+#include "ED_buttons.hh"
 #include "ED_screen.hh"
 #include "ED_space_api.hh"
+#include "UI_interface_c.hh"
 #include "UI_view2d.hh"
 
 #include "WM_api.hh"
@@ -51,6 +53,12 @@ static SpaceLink *better_timeline_create(const ScrArea * /*area*/, const Scene *
   BLI_addtail(&sbetter_timeline->regionbase, region);
   region->regiontype = RGN_TYPE_HEADER;
   region->alignment = (U.uiflag & USER_HEADER_BOTTOM) ? RGN_ALIGN_BOTTOM : RGN_ALIGN_TOP;
+
+  region = BKE_area_region_new();
+  BLI_addtail(&sbetter_timeline->regionbase, region);
+  region->regiontype = RGN_TYPE_UI;
+  region->alignment = RGN_ALIGN_RIGHT;
+  region->flag |= RGN_FLAG_HIDDEN;
 
   region = BKE_area_region_new();
   BLI_addtail(&sbetter_timeline->regionbase, region);
@@ -112,6 +120,17 @@ static void better_timeline_header_region_init(wmWindowManager * /*wm*/, ARegion
 static void better_timeline_header_region_draw(const bContext *C, ARegion *region)
 {
   ED_region_header(C, region);
+}
+
+static void better_timeline_properties_region_init(wmWindowManager *wm, ARegion *region)
+{
+  region->v2d.scroll = V2D_SCROLL_RIGHT | V2D_SCROLL_VERTICAL_HIDE;
+  ED_region_panels_init(wm, region);
+}
+
+static void better_timeline_properties_region_draw(const bContext *C, ARegion *region)
+{
+  ED_region_panels(C, region);
 }
 
 static void better_timeline_header_region_listener(const wmRegionListenerParams *params)
@@ -180,6 +199,15 @@ void ED_spacetype_better_timeline()
   art->init = better_timeline_header_region_init;
   art->draw = better_timeline_header_region_draw;
   art->listener = better_timeline_header_region_listener;
+  BLI_addhead(&st->regiontypes, art);
+
+  art = MEM_new_zeroed<ARegionType>("spacetype better timeline ui region");
+  art->regionid = RGN_TYPE_UI;
+  art->prefsizex = UI_SIDEBAR_PANEL_WIDTH;
+  art->keymapflag = ED_KEYMAP_UI;
+  art->init = better_timeline_properties_region_init;
+  art->snap_size = ED_region_generic_panel_region_snap_size;
+  art->draw = better_timeline_properties_region_draw;
   BLI_addhead(&st->regiontypes, art);
 
   BKE_spacetype_register(std::move(st));

@@ -110,6 +110,11 @@ class BetterTimelineButtonsPanel:
     bl_region_type = 'HEADER'
 
 
+class BetterTimelineSidebarPanel:
+    bl_space_type = 'BETTER_TIMELINE'
+    bl_region_type = 'UI'
+
+
 class BETTER_TIMELINE_HT_header(Header):
     bl_space_type = 'BETTER_TIMELINE'
 
@@ -212,6 +217,55 @@ class BETTER_TIMELINE_PT_playback(BetterTimelineButtonsPanel, Panel):
         draw_better_timeline_playback_settings(layout, context)
 
 
+class BETTER_TIMELINE_PT_active_clip(BetterTimelineSidebarPanel, Panel):
+    bl_label = "Clip"
+
+    @classmethod
+    def poll(cls, context):
+        space = context.space_data
+        return space is not None and getattr(space, "active_clip", None) is not None
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        clip = context.space_data.active_clip
+        layout.prop(clip, "name")
+        row = layout.row()
+        row.enabled = False
+        row.prop(clip, "type_label", text="Type")
+
+        col = layout.column(align=True)
+        col.prop(clip, "start_frame")
+        col.prop(clip, "end_frame")
+        col.prop(clip, "duration")
+
+
+class BETTER_TIMELINE_PT_active_track(BetterTimelineSidebarPanel, Panel):
+    bl_label = "Track"
+
+    @classmethod
+    def poll(cls, context):
+        space = context.space_data
+        return (
+            space is not None and
+            getattr(space, "active_clip", None) is None and
+            getattr(space, "active_track", None) is not None
+        )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        track = context.space_data.active_track
+        layout.prop(track, "name")
+        row = layout.row()
+        row.enabled = False
+        row.prop(track, "type_label", text="Type")
+
+
 classes = (
     BETTER_TIMELINE_HT_header,
     BETTER_TIMELINE_MT_editor_menus,
@@ -221,6 +275,8 @@ classes = (
     BETTER_TIMELINE_PT_playhead_snapping,
     BETTER_TIMELINE_PT_jump,
     BETTER_TIMELINE_PT_playback,
+    BETTER_TIMELINE_PT_active_clip,
+    BETTER_TIMELINE_PT_active_track,
 )
 
 

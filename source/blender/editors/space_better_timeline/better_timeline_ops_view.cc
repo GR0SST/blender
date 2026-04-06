@@ -361,6 +361,7 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
   bool has_zoom_out = false;
   bool has_view_all = false;
   bool has_play_toggle = false;
+  bool has_properties_toggle = false;
   bool has_undo = false;
   bool has_redo = false;
   bool has_duplicate_clip = false;
@@ -472,6 +473,9 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
     }
     else if (STREQ(kmi->idname, "SCREEN_OT_animation_play")) {
       has_play_toggle = true;
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_toggle_properties_panel")) {
+      has_properties_toggle = (kmi->type == EVT_NKEY && kmi->val == KM_PRESS);
     }
     else if (STREQ(kmi->idname, "ED_OT_undo")) {
       has_undo = (kmi->type == EVT_ZKEY && kmi->val == KM_PRESS && kmi->oskey == KM_MOD_HELD &&
@@ -793,6 +797,44 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
     params.direction = KM_ANY;
     WM_keymap_add_item(keymap, "SCREEN_OT_animation_play", &params);
   }
+
+  if (!has_properties_toggle) {
+    KeyMapItem_Params params{};
+    params.type = EVT_NKEY;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_toggle_properties_panel", &params);
+  }
+}
+
+static bool better_timeline_toggle_properties_panel_poll(bContext *C)
+{
+  return better_timeline_operator_region_poll(C);
+}
+
+static wmOperatorStatus better_timeline_toggle_properties_panel_exec(bContext *C, wmOperator * /*op*/)
+{
+  ScrArea *area = CTX_wm_area(C);
+  ARegion *ui_region = BKE_area_find_region_type(area, RGN_TYPE_UI);
+  if (ui_region == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  ED_region_toggle_hidden(C, ui_region);
+  return OPERATOR_FINISHED;
+}
+
+static void BETTER_TIMELINE_OT_toggle_properties_panel(wmOperatorType *ot)
+{
+  ot->name = "Toggle Better Timeline Properties";
+  ot->idname = "BETTER_TIMELINE_OT_toggle_properties_panel";
+  ot->description = "Show or hide the Better Timeline properties sidebar";
+
+  ot->exec = better_timeline_toggle_properties_panel_exec;
+  ot->poll = better_timeline_toggle_properties_panel_poll;
+
+  ot->flag = OPTYPE_INTERNAL;
 }
 
 void better_timeline_main_region_keymap_init(wmWindowManager *wm, ARegion *region)
@@ -823,6 +865,7 @@ void better_timeline_view_ops_register()
   WM_operatortype_append(BETTER_TIMELINE_OT_scroll_tracks);
   WM_operatortype_append(BETTER_TIMELINE_OT_resize_panel);
   WM_operatortype_append(BETTER_TIMELINE_OT_view_all);
+  WM_operatortype_append(BETTER_TIMELINE_OT_toggle_properties_panel);
 }
 
 }  // namespace blender

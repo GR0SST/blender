@@ -528,6 +528,20 @@ bool better_timeline_track_can_place_clip(const BetterTimelineTrack *track,
   return true;
 }
 
+namespace ed::better_timeline {
+
+bool track_can_place_clip(const BetterTimelineTrack &track,
+                          const StringRef clip_type_idname,
+                          const float start_frame,
+                          const float end_frame,
+                          const BetterTimelineClip *ignore_clip)
+{
+  return better_timeline_track_can_place_clip(
+      &track, clip_type_idname, start_frame, end_frame, ignore_clip);
+}
+
+}  // namespace ed::better_timeline
+
 const BetterTimelineClip *better_timeline_clip_covering_frame(const BetterTimelineTrack *track,
                                                               const float frame,
                                                               const StringRef clip_type_idname)
