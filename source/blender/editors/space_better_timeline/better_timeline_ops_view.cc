@@ -24,6 +24,8 @@
 
 #include "UI_view2d.hh"
 
+#include "RNA_access.hh"
+
 #include "WM_api.hh"
 #include "WM_keymap.hh"
 #include "WM_types.hh"
@@ -340,6 +342,8 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
   bool has_track_select = false;
   bool has_track_select_shift = false;
   bool has_track_select_oskey = false;
+  bool has_clip_resize = false;
+  bool has_clip_resize_shift = false;
   bool has_clip_drag = false;
   bool has_clip_drag_shift = false;
   bool has_clip_drag_oskey = false;
@@ -370,6 +374,7 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
   bool has_copy_track = false;
   bool has_paste_clip = false;
   bool has_paste_track = false;
+  bool has_rename = false;
 
   wmKeyMapItem *kmi_next = nullptr;
   for (wmKeyMapItem *kmi = static_cast<wmKeyMapItem *>(keymap->items.first); kmi != nullptr;
@@ -382,6 +387,16 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
         WM_keyconfig_update_tag(keymap, kmi);
       }
       has_add_track = (kmi->type == LEFTMOUSE && kmi->val == KM_RELEASE);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_clip_resize")) {
+      if (kmi->type == LEFTMOUSE && kmi->val == KM_PRESS) {
+        if (kmi->shift == KM_MOD_HELD) {
+          has_clip_resize_shift = true;
+        }
+        else if (kmi->shift == KM_NOTHING) {
+          has_clip_resize = true;
+        }
+      }
     }
     else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_clip_drag")) {
       if (kmi->type == LEFTMOUSE && kmi->val == KM_PRESS_DRAG) {
@@ -508,6 +523,11 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
       has_paste_track = (kmi->type == EVT_VKEY && kmi->val == KM_PRESS &&
                          kmi->oskey == KM_MOD_HELD);
     }
+    else if (STREQ(kmi->idname, "WM_OT_call_panel")) {
+      if (kmi->type == EVT_F2KEY && kmi->val == KM_PRESS) {
+        has_rename = true;
+      }
+    }
   }
 
   if (!has_panel_resize) {
@@ -526,6 +546,26 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
     params.modifier = 0;
     params.direction = KM_ANY;
     WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_add_track", &params);
+  }
+
+  /* Resize must be registered before clip_drag so its invoke gets first crack at edge clicks.
+   * If the mouse is not on a clip edge, it returns PASS_THROUGH and clip_drag handles it. */
+  if (!has_clip_resize) {
+    KeyMapItem_Params params{};
+    params.type = LEFTMOUSE;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_clip_resize", &params);
+  }
+
+  if (!has_clip_resize_shift) {
+    KeyMapItem_Params params{};
+    params.type = LEFTMOUSE;
+    params.value = KM_PRESS;
+    params.modifier = KM_SHIFT;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_clip_resize", &params);
   }
 
   if (!has_clip_drag) {
@@ -805,6 +845,17 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
     params.modifier = 0;
     params.direction = KM_ANY;
     WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_toggle_properties_panel", &params);
+  }
+
+  if (!has_rename) {
+    KeyMapItem_Params params{};
+    params.type = EVT_F2KEY;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    wmKeyMapItem *kmi = WM_keymap_add_item(keymap, "WM_OT_call_panel", &params);
+    RNA_string_set(kmi->ptr, "name", "TOPBAR_PT_name");
+    RNA_boolean_set(kmi->ptr, "keep_open", false);
   }
 }
 

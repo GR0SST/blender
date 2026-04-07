@@ -1520,7 +1520,8 @@ static void rna_BetterTimelineClip_start_frame_set(PointerRNA *ptr, float value)
 {
   const auto *clip = static_cast<const BetterTimelineClip *>(ptr->data);
   if (clip != nullptr) {
-    rna_BetterTimelineClip_apply_range(ptr, value, clip->end_frame);
+    const float dur = clip->end_frame - clip->start_frame;
+    rna_BetterTimelineClip_apply_range(ptr, value, value + dur);
   }
 }
 

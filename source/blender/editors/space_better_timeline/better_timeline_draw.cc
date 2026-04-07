@@ -323,12 +323,16 @@ static void better_timeline_draw_clip_connector(const View2D *v2d,
   UNUSED_VARS(v2d, clip_y_min, clip_y_max, pos);
 }
 
-static void better_timeline_draw_blend_overlap(const View2D *v2d,
-                                               const BetterTimelineClip *left_clip,
-                                               const BetterTimelineClip *right_clip,
-                                               const float clip_y_min,
-                                               const float clip_y_max,
-                                               const uint pos)
+static void better_timeline_draw_blend_overlap_at_frames(const View2D *v2d,
+                                                          const BetterTimelineClip *left_clip,
+                                                          const float left_start,
+                                                          const float left_end,
+                                                          const BetterTimelineClip *right_clip,
+                                                          const float right_start,
+                                                          const float right_end,
+                                                          const float clip_y_min,
+                                                          const float clip_y_max,
+                                                          const uint pos)
 {
   if (left_clip == nullptr || right_clip == nullptr ||
       !ed::better_timeline::clip_types_allow_overlap(left_clip->clip_type, right_clip->clip_type))
@@ -336,8 +340,8 @@ static void better_timeline_draw_blend_overlap(const View2D *v2d,
     return;
   }
 
-  const float overlap_start = std::max(left_clip->start_frame, right_clip->start_frame);
-  const float overlap_end = std::min(left_clip->end_frame, right_clip->end_frame);
+  const float overlap_start = std::max(left_start, right_start);
+  const float overlap_end = std::min(left_end, right_end);
   if (overlap_end <= overlap_start) {
     return;
   }
@@ -352,31 +356,51 @@ static void better_timeline_draw_blend_overlap(const View2D *v2d,
   float right_color[4];
   better_timeline_clip_color_get(left_clip, left_color);
   better_timeline_clip_color_get(right_clip, right_color);
-  left_color[3] = 0.95f;
-  right_color[3] = 0.95f;
+  left_color[3] = 0.92f;
+  right_color[3] = 0.92f;
 
+  /* Left clip (fading out): upper-left triangle of the blend zone. */
   immUniformColor4f(left_color[0], left_color[1], left_color[2], left_color[3]);
   immBegin(GPU_PRIM_TRIS, 3);
   immVertex2f(pos, overlap_start_x, clip_y_min);
   immVertex2f(pos, overlap_start_x, clip_y_max);
-  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immVertex2f(pos, overlap_end_x, clip_y_max);
   immEnd();
 
+  /* Right clip (fading in): lower-right triangle of the blend zone. */
   immUniformColor4f(right_color[0], right_color[1], right_color[2], right_color[3]);
   immBegin(GPU_PRIM_TRIS, 3);
-  immVertex2f(pos, overlap_start_x, clip_y_max);
+  immVertex2f(pos, overlap_start_x, clip_y_min);
   immVertex2f(pos, overlap_end_x, clip_y_max);
   immVertex2f(pos, overlap_end_x, clip_y_min);
   immEnd();
 
-  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.28f);
+  /* Single diagonal boundary line separating the two triangles (bottom-left → top-right). */
+  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.35f);
   GPU_line_width(1.0f);
-  immBegin(GPU_PRIM_LINES, 4);
-  immVertex2f(pos, overlap_start_x, clip_y_max);
-  immVertex2f(pos, overlap_end_x, clip_y_min);
+  immBegin(GPU_PRIM_LINES, 2);
   immVertex2f(pos, overlap_start_x, clip_y_min);
   immVertex2f(pos, overlap_end_x, clip_y_max);
   immEnd();
+}
+
+static void better_timeline_draw_blend_overlap(const View2D *v2d,
+                                               const BetterTimelineClip *left_clip,
+                                               const BetterTimelineClip *right_clip,
+                                               const float clip_y_min,
+                                               const float clip_y_max,
+                                               const uint pos)
+{
+  better_timeline_draw_blend_overlap_at_frames(v2d,
+                                               left_clip,
+                                               left_clip->start_frame,
+                                               left_clip->end_frame,
+                                               right_clip,
+                                               right_clip->start_frame,
+                                               right_clip->end_frame,
+                                               clip_y_min,
+                                               clip_y_max,
+                                               pos);
 }
 
 static void better_timeline_draw_blend_overlap_preview(const View2D *v2d,
@@ -408,35 +432,16 @@ static void better_timeline_draw_blend_overlap_preview(const View2D *v2d,
     return;
   }
 
-  float left_color[4];
-  float right_color[4];
-  better_timeline_clip_color_get(left_clip, left_color);
-  better_timeline_clip_color_get(right_clip, right_color);
-  left_color[3] = 0.95f;
-  right_color[3] = 0.95f;
-
-  immUniformColor4f(left_color[0], left_color[1], left_color[2], left_color[3]);
-  immBegin(GPU_PRIM_TRIS, 3);
-  immVertex2f(pos, overlap_start_x, clip_y_min);
-  immVertex2f(pos, overlap_start_x, clip_y_max);
-  immVertex2f(pos, overlap_end_x, clip_y_min);
-  immEnd();
-
-  immUniformColor4f(right_color[0], right_color[1], right_color[2], right_color[3]);
-  immBegin(GPU_PRIM_TRIS, 3);
-  immVertex2f(pos, overlap_start_x, clip_y_max);
-  immVertex2f(pos, overlap_end_x, clip_y_max);
-  immVertex2f(pos, overlap_end_x, clip_y_min);
-  immEnd();
-
-  immUniformColor4f(1.0f, 1.0f, 1.0f, 0.28f);
-  GPU_line_width(1.0f);
-  immBegin(GPU_PRIM_LINES, 4);
-  immVertex2f(pos, overlap_start_x, clip_y_max);
-  immVertex2f(pos, overlap_end_x, clip_y_min);
-  immVertex2f(pos, overlap_start_x, clip_y_min);
-  immVertex2f(pos, overlap_end_x, clip_y_max);
-  immEnd();
+  better_timeline_draw_blend_overlap_at_frames(v2d,
+                                               left_clip,
+                                               left_start_frame,
+                                               left_end_frame,
+                                               right_clip,
+                                               right_start_frame,
+                                               right_end_frame,
+                                               clip_y_min,
+                                               clip_y_max,
+                                               pos);
 }
 
 static void better_timeline_draw_clip_label(const BetterTimelineClip *clip,
@@ -450,12 +455,17 @@ static void better_timeline_draw_clip_label(const BetterTimelineClip *clip,
     return;
   }
 
-  BLF_color4f(BLF_default(), 0.97f, 0.97f, 0.97f, 0.95f);
+  const int font_id = BLF_default();
+  const float pad_x = 4.0f * UI_SCALE_FAC;
+  BLF_clipping(font_id, start_x + pad_x, clip_y_min, end_x - pad_x, clip_y_max);
+  BLF_enable(font_id, BLF_CLIPPING);
+  BLF_color4f(font_id, 0.97f, 0.97f, 0.97f, 0.95f);
   BLF_draw_default(start_x + (8.0f * UI_SCALE_FAC),
                    clip_y_min + ((clip_y_max - clip_y_min) * 0.5f) - (5.0f * UI_SCALE_FAC),
                    0.0f,
                    clip_label,
                    BLF_DRAW_STR_DUMMY_MAX);
+  BLF_disable(font_id, BLF_CLIPPING);
 }
 
 void better_timeline_clip_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
@@ -547,6 +557,57 @@ void better_timeline_clip_box_select_visual_state_clear(SpaceBetterTimeline *sbe
   runtime->clip_box_select_visual_state.active = false;
 }
 
+void better_timeline_clip_resize_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                     const ARegion *region,
+                                                     const BetterTimelineTrack *track,
+                                                     const BetterTimelineClip *clip,
+                                                     const float preview_start_frame,
+                                                     const float preview_end_frame)
+{
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(
+      const_cast<SpaceBetterTimeline *>(sbetter_timeline));
+  if (runtime == nullptr) {
+    return;
+  }
+
+  BetterTimelineClipResizeVisualState &state = runtime->clip_resize_visual_state;
+  state.region = region;
+  state.track = track;
+  state.clip = clip;
+  state.preview_start_frame = preview_start_frame;
+  state.preview_end_frame = preview_end_frame;
+  state.active = true;
+}
+
+void better_timeline_clip_resize_visual_state_clear(SpaceBetterTimeline *sbetter_timeline)
+{
+  SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
+  if (runtime == nullptr) {
+    return;
+  }
+
+  BetterTimelineClipResizeVisualState &state = runtime->clip_resize_visual_state;
+  state.region = nullptr;
+  state.track = nullptr;
+  state.clip = nullptr;
+  state.preview_start_frame = 0.0f;
+  state.preview_end_frame = 0.0f;
+  state.active = false;
+}
+
+bool better_timeline_clip_resize_visual_state_is_resized_clip(
+    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineClip *clip)
+{
+  const SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(
+      const_cast<SpaceBetterTimeline *>(sbetter_timeline));
+  if (runtime == nullptr) {
+    return false;
+  }
+
+  const BetterTimelineClipResizeVisualState &state = runtime->clip_resize_visual_state;
+  return state.active && state.clip == clip;
+}
+
 static void better_timeline_draw_clip_box_select_overlay(
     const ARegion *region, const SpaceBetterTimeline *sbetter_timeline)
 {
@@ -619,6 +680,10 @@ static void better_timeline_draw_clips(const ARegion *region,
       (runtime != nullptr) ? &runtime->clip_drag_visual_state : nullptr;
   const bool clip_drag_active = clip_drag_state != nullptr && clip_drag_state->active &&
                                 clip_drag_state->region == region;
+  const BetterTimelineClipResizeVisualState *clip_resize_state =
+      (runtime != nullptr) ? &runtime->clip_resize_visual_state : nullptr;
+  const bool clip_resize_active = clip_resize_state != nullptr && clip_resize_state->active &&
+                                  clip_resize_state->region == region;
   for (int row_index = 0; row_index < track_count; row_index++) {
     if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
       continue;
@@ -640,6 +705,11 @@ static void better_timeline_draw_clips(const ARegion *region,
     {
       if (clip_drag_active &&
           better_timeline_clip_drag_visual_state_is_dragged_clip(sbetter_timeline, clip))
+      {
+        continue;
+      }
+      if (clip_resize_active &&
+          better_timeline_clip_resize_visual_state_is_resized_clip(sbetter_timeline, clip))
       {
         continue;
       }
@@ -684,6 +754,24 @@ static void better_timeline_draw_clips(const ARegion *region,
                                         better_timeline_clip_is_selected(clip));
       better_timeline_draw_clip_label(
           clip, start_x, end_x, snapped_clip_y_min, snapped_clip_y_max);
+
+      /* Resize grip lines: subtle bright vertical markers at each handle zone boundary
+       * on selected clips so the user knows where to grab for resize. */
+      if (better_timeline_clip_is_selected(clip)) {
+        const float handle_w = BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH * UI_SCALE_FAC;
+        const float inset_y = 4.0f * UI_SCALE_FAC;
+        immUniformColor4f(1.0f, 1.0f, 1.0f, 0.50f);
+        immRectf(pos,
+                 start_x + handle_w - 1.0f,
+                 snapped_clip_y_min + inset_y,
+                 start_x + handle_w,
+                 snapped_clip_y_max - inset_y);
+        immRectf(pos,
+                 end_x - handle_w,
+                 snapped_clip_y_min + inset_y,
+                 end_x - handle_w + 1.0f,
+                 snapped_clip_y_max - inset_y);
+      }
     }
 
     for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
@@ -695,12 +783,22 @@ static void better_timeline_draw_clips(const ARegion *region,
       {
         continue;
       }
+      if (clip_resize_active &&
+          better_timeline_clip_resize_visual_state_is_resized_clip(sbetter_timeline, clip))
+      {
+        continue;
+      }
 
       for (const BetterTimelineClip *other_clip = clip->next; other_clip != nullptr;
            other_clip = other_clip->next)
       {
         if (clip_drag_active &&
             better_timeline_clip_drag_visual_state_is_dragged_clip(sbetter_timeline, other_clip))
+        {
+          continue;
+        }
+        if (clip_resize_active &&
+            better_timeline_clip_resize_visual_state_is_resized_clip(sbetter_timeline, other_clip))
         {
           continue;
         }
@@ -821,6 +919,91 @@ static void better_timeline_draw_clips(const ARegion *region,
             clip_y_min,
             clip_y_max,
             pos);
+      }
+    }
+  }
+
+  /* Resize preview: draw the resized clip at its preview bounds. */
+  if (clip_resize_active && clip_resize_state->clip != nullptr &&
+      clip_resize_state->track != nullptr)
+  {
+    const BetterTimelineClip *clip = clip_resize_state->clip;
+    const BetterTimelineTrack *preview_track = clip_resize_state->track;
+    const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
+    if (row_index >= 0) {
+      const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+      const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+      const float clip_y_max = row_y_max - (6.0f * UI_SCALE_FAC);
+      const float clip_y_min = row_y_min + (6.0f * UI_SCALE_FAC);
+
+      float start_x = ui::view2d_view_to_region_x(v2d, clip_resize_state->preview_start_frame);
+      float end_x = ui::view2d_view_to_region_x(v2d, clip_resize_state->preview_end_frame);
+      end_x = std::max(end_x, start_x + (10.0f * UI_SCALE_FAC));
+      float snapped_clip_y_min = clip_y_min;
+      float snapped_clip_y_max = clip_y_max;
+      better_timeline_clip_rect_pixel_snap(
+          &start_x, &end_x, &snapped_clip_y_min, &snapped_clip_y_max);
+
+      float clip_color[4];
+      better_timeline_clip_color_get(clip, clip_color);
+      clip_color[3] = 0.92f;
+      immUniformColor4f(clip_color[0], clip_color[1], clip_color[2], clip_color[3]);
+      immRectf(pos, start_x, snapped_clip_y_min, end_x, snapped_clip_y_max);
+
+      better_timeline_draw_clip_bottom_accent(
+          start_x, end_x, snapped_clip_y_min, pos, clip_color);
+      better_timeline_draw_clip_selection_highlight(
+          start_x, end_x, snapped_clip_y_min, snapped_clip_y_max, pos);
+
+      float outline_color[4];
+      better_timeline_clip_outline_color_get(clip, outline_color);
+      better_timeline_draw_clip_outline(start_x,
+                                        end_x,
+                                        snapped_clip_y_min,
+                                        snapped_clip_y_max,
+                                        pos,
+                                        outline_color,
+                                        true);
+      better_timeline_draw_clip_label(
+          clip, start_x, end_x, snapped_clip_y_min, snapped_clip_y_max);
+
+      /* Resize grip lines on preview clip, matching the static selected-clip indicator. */
+      const float handle_w = BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH * UI_SCALE_FAC;
+      const float inset_y = 4.0f * UI_SCALE_FAC;
+      immUniformColor4f(1.0f, 1.0f, 1.0f, 0.50f);
+      immRectf(pos,
+               start_x + handle_w - 1.0f,
+               snapped_clip_y_min + inset_y,
+               start_x + handle_w,
+               snapped_clip_y_max - inset_y);
+      immRectf(pos,
+               end_x - handle_w,
+               snapped_clip_y_min + inset_y,
+               end_x - handle_w + 1.0f,
+               snapped_clip_y_max - inset_y);
+
+      /* Draw blend overlaps between the resize preview bounds and every other clip in the track.
+       * This ensures the blend zone remains visible (and correctly positioned) while dragging. */
+      for (const BetterTimelineClip *other_clip =
+               static_cast<const BetterTimelineClip *>(preview_track->clips.first);
+           other_clip != nullptr;
+           other_clip = other_clip->next)
+      {
+        if (other_clip == clip) {
+          /* Skip the clip being resized — its preview bounds are handled below. */
+          continue;
+        }
+
+        better_timeline_draw_blend_overlap_preview(v2d,
+                                                   clip,
+                                                   clip_resize_state->preview_start_frame,
+                                                   clip_resize_state->preview_end_frame,
+                                                   other_clip,
+                                                   other_clip->start_frame,
+                                                   other_clip->end_frame,
+                                                   snapped_clip_y_min,
+                                                   snapped_clip_y_max,
+                                                   pos);
       }
     }
   }

@@ -97,18 +97,28 @@ static void better_timeline_main_region_cursor(wmWindow *win, ScrArea *area, ARe
 {
   auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
   const int region_x = win->runtime->eventstate->xy[0] - region->winrct.xmin;
+  const int region_y = win->runtime->eventstate->xy[1] - region->winrct.ymin;
 
   if (better_timeline_is_on_panel_divider(region, sbetter_timeline, region_x)) {
     WM_cursor_set(win, WM_CURSOR_X_MOVE);
     return;
   }
-  if (better_timeline_is_in_track_scrollbar(region,
-                                            sbetter_timeline,
-                                            region_x,
-                                            win->runtime->eventstate->xy[1] - region->winrct.ymin))
-  {
+  if (better_timeline_is_in_track_scrollbar(region, sbetter_timeline, region_x, region_y)) {
     WM_cursor_set(win, WM_CURSOR_Y_MOVE);
     return;
+  }
+
+  /* Show horizontal resize cursor when hovering over a clip edge.
+   * Use edge-aware pick so blend zones (two clips overlapping) resolve correctly. */
+  const rcti body_rect = better_timeline_body_rect(region, sbetter_timeline);
+  if (BLI_rcti_isect_pt(&body_rect, region_x, region_y)) {
+    eBetterTimelineClipResizeEdge edge = BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE;
+    better_timeline_clip_for_resize_from_region_position(
+        region, sbetter_timeline, region_x, region_y, nullptr, &edge);
+    if (edge != BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE) {
+      WM_cursor_set(win, WM_CURSOR_EW_ARROW);
+      return;
+    }
   }
 
   WM_cursor_set(win, WM_CURSOR_DEFAULT);

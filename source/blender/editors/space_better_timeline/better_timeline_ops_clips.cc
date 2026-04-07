@@ -942,6 +942,11 @@ static wmOperatorStatus better_timeline_clip_box_select_modal(bContext *C,
   return OPERATOR_RUNNING_MODAL;
 }
 
+/* Forward declaration: defined later in the resize operator section. */
+static wmOperatorStatus better_timeline_clip_resize_modal(bContext *C,
+                                                          wmOperator *op,
+                                                          const wmEvent *event);
+
 static wmOperatorStatus better_timeline_clip_interaction_modal(bContext *C,
                                                                wmOperator *op,
                                                                const wmEvent *event)
@@ -956,6 +961,8 @@ static wmOperatorStatus better_timeline_clip_interaction_modal(bContext *C,
       return better_timeline_clip_drag_modal(C, op, event);
     case BETTER_TIMELINE_CLIP_INTERACTION_BOX_SELECT:
       return better_timeline_clip_box_select_modal(C, op, event);
+    case BETTER_TIMELINE_CLIP_INTERACTION_RESIZE:
+      return better_timeline_clip_resize_modal(C, op, event);
   }
 
   return OPERATOR_CANCELLED;
@@ -1397,10 +1404,308 @@ static void BETTER_TIMELINE_OT_paste_clip(wmOperatorType *ot)
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 }
 
+/* -------------------------------------------------------------------- */
+/** \name Clip Resize Operator
+ * \{ */
+
+static constexpr float BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH_PX =
+    BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH;
+
+eBetterTimelineClipResizeEdge better_timeline_clip_resize_edge_from_region_position(
+    const ARegion *region,
+    const SpaceBetterTimeline *sbetter_timeline,
+    const BetterTimelineTrack *track,
+    const BetterTimelineClip *clip,
+    const int region_x,
+    const int region_y)
+{
+  const View2D *v2d = &region->v2d;
+  const rctf clip_rect = better_timeline_clip_rect(region, sbetter_timeline, v2d, track, clip);
+
+  if (!BLI_rctf_isect_pt(&clip_rect, float(region_x), float(region_y))) {
+    return BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE;
+  }
+
+  const float handle_w = BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH_PX * UI_SCALE_FAC;
+  if (float(region_x) <= clip_rect.xmin + handle_w) {
+    return BETTER_TIMELINE_CLIP_RESIZE_EDGE_START;
+  }
+  if (float(region_x) >= clip_rect.xmax - handle_w) {
+    return BETTER_TIMELINE_CLIP_RESIZE_EDGE_END;
+  }
+  return BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE;
+}
+
+/**
+ * Find the clip and resize edge closest to the mouse position, searching all clips in the
+ * row rather than relying on the center-distance hit-test. This correctly resolves blend
+ * zones where two clips overlap: hovering near the right edge of the left clip and the left
+ * edge of the right clip both produce distinct, correct results.
+ */
+BetterTimelineClip *better_timeline_clip_for_resize_from_region_position(
+    const ARegion *region,
+    SpaceBetterTimeline *sbetter_timeline,
+    const int region_x,
+    const int region_y,
+    BetterTimelineTrack **r_track,
+    eBetterTimelineClipResizeEdge *r_edge)
+{
+  if (r_track != nullptr) {
+    *r_track = nullptr;
+  }
+  if (r_edge != nullptr) {
+    *r_edge = BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE;
+  }
+
+  if (region == nullptr || sbetter_timeline == nullptr ||
+      !better_timeline_is_in_timeline_canvas(region, sbetter_timeline, region_x, region_y))
+  {
+    return nullptr;
+  }
+
+  const int row_index = better_timeline_track_from_region_y(region, sbetter_timeline, region_y);
+  BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+  if (track == nullptr) {
+    return nullptr;
+  }
+
+  const View2D *v2d = &region->v2d;
+  const float handle_w = BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH_PX * UI_SCALE_FAC;
+
+  BetterTimelineClip *best_clip = nullptr;
+  eBetterTimelineClipResizeEdge best_edge = BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE;
+  float best_dist = FLT_MAX;
+
+  for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+       clip != nullptr;
+       clip = clip->next)
+  {
+    const rctf clip_rect = better_timeline_clip_rect(region, sbetter_timeline, v2d, track, clip);
+    /* Vertical bounds must match. */
+    if (float(region_y) < clip_rect.ymin || float(region_y) > clip_rect.ymax) {
+      continue;
+    }
+
+    /* Distance to start edge. */
+    const float dist_start = std::abs(float(region_x) - clip_rect.xmin);
+    if (dist_start <= handle_w && dist_start < best_dist) {
+      best_dist = dist_start;
+      best_clip = clip;
+      best_edge = BETTER_TIMELINE_CLIP_RESIZE_EDGE_START;
+    }
+
+    /* Distance to end edge. */
+    const float dist_end = std::abs(float(region_x) - clip_rect.xmax);
+    if (dist_end <= handle_w && dist_end < best_dist) {
+      best_dist = dist_end;
+      best_clip = clip;
+      best_edge = BETTER_TIMELINE_CLIP_RESIZE_EDGE_END;
+    }
+  }
+
+  if (best_clip != nullptr && r_track != nullptr) {
+    *r_track = track;
+  }
+  if (r_edge != nullptr) {
+    *r_edge = best_edge;
+  }
+  return best_clip;
+}
+
+static void better_timeline_clip_resize_finish(bContext *C,
+                                               wmOperator *op,
+                                               const bool apply_changes)
+{
+  auto *resize_data = static_cast<BetterTimelineClipResizeData *>(op->customdata);
+  if (resize_data == nullptr) {
+    return;
+  }
+
+  if (apply_changes) {
+    const bool changed = (resize_data->preview_start_frame != resize_data->initial_start_frame ||
+                          resize_data->preview_end_frame != resize_data->initial_end_frame);
+    if (changed) {
+      better_timeline_undo_push_init(C, op->type->name);
+      resize_data->clip->start_frame = resize_data->preview_start_frame;
+      resize_data->clip->end_frame = resize_data->preview_end_frame;
+      better_timeline_tag_space_state_changed(C);
+    }
+  }
+
+  better_timeline_clip_resize_visual_state_clear(
+      static_cast<SpaceBetterTimeline *>(CTX_wm_area(C)->spacedata.first));
+  WM_cursor_modal_restore(CTX_wm_window(C));
+  MEM_delete(resize_data);
+  op->customdata = nullptr;
+  ED_area_tag_redraw(CTX_wm_area(C));
+}
+
+static wmOperatorStatus better_timeline_clip_resize_modal(bContext *C,
+                                                          wmOperator *op,
+                                                          const wmEvent *event)
+{
+  auto *resize_data = static_cast<BetterTimelineClipResizeData *>(op->customdata);
+  ScrArea *area = CTX_wm_area(C);
+  ARegion *region = CTX_wm_region(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+
+  auto update_preview = [&]() {
+    const float mouse_frame = std::round(
+        ui::view2d_region_to_view_x(&region->v2d, event->mval[0]));
+
+    float new_start = resize_data->initial_start_frame;
+    float new_end = resize_data->initial_end_frame;
+
+    if (resize_data->speed_scale_mode) {
+      /* Future: speed-scale drag for Animation clips (Shift+drag on BETTER_TIMELINE_CT_ANIMATION).
+       * When implemented, adjust a speed_scale property on the clip's IDProperty payload
+       * instead of trimming the boundary. For now fall through to normal trim. */
+    }
+
+    if (resize_data->resize_edge == BETTER_TIMELINE_CLIP_RESIZE_EDGE_START) {
+      new_start = std::min(mouse_frame, resize_data->initial_end_frame - 1.0f);
+    }
+    else {
+      new_end = std::max(mouse_frame, resize_data->initial_start_frame + 1.0f);
+    }
+
+    if (better_timeline_track_can_place_clip(
+            resize_data->track, resize_data->clip->clip_type, new_start, new_end, resize_data->clip))
+    {
+      resize_data->preview_start_frame = new_start;
+      resize_data->preview_end_frame = new_end;
+    }
+
+    better_timeline_clip_resize_visual_state_update(sbetter_timeline,
+                                                    region,
+                                                    resize_data->track,
+                                                    resize_data->clip,
+                                                    resize_data->preview_start_frame,
+                                                    resize_data->preview_end_frame);
+  };
+
+  switch (event->type) {
+    case MOUSEMOVE:
+      update_preview();
+      ED_area_tag_redraw(area);
+      break;
+    case LEFTMOUSE:
+      if (event->val == KM_RELEASE) {
+        better_timeline_clip_resize_finish(C, op, true);
+        return OPERATOR_FINISHED;
+      }
+      break;
+    case EVT_RETKEY:
+    case EVT_SPACEKEY:
+      if (event->val == KM_PRESS) {
+        better_timeline_clip_resize_finish(C, op, true);
+        return OPERATOR_FINISHED;
+      }
+      break;
+    case RIGHTMOUSE:
+    case EVT_ESCKEY:
+      if (event->type == EVT_ESCKEY || event->val == KM_PRESS) {
+        better_timeline_clip_resize_finish(C, op, false);
+        return OPERATOR_CANCELLED;
+      }
+      break;
+    default:
+      break;
+  }
+
+  return OPERATOR_RUNNING_MODAL;
+}
+
+static bool better_timeline_clip_resize_poll(bContext *C)
+{
+  return better_timeline_operator_region_poll(C);
+}
+
+static wmOperatorStatus better_timeline_clip_resize_invoke(bContext *C,
+                                                           wmOperator *op,
+                                                           const wmEvent *event)
+{
+  ScrArea *area = CTX_wm_area(C);
+  ARegion *region = CTX_wm_region(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+
+  if (better_timeline_scrub_event_in_region(area, region, event) ||
+      !better_timeline_is_in_timeline_canvas(
+          region, sbetter_timeline, event->mval[0], event->mval[1]))
+  {
+    return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
+  }
+
+  /* oskey-click is reserved for toggle-select, pass through. */
+  if ((event->modifier & KM_OSKEY) != 0) {
+    return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
+  }
+  const bool shift = (event->modifier & KM_SHIFT) != 0;
+
+  /* Use edge-aware pick so blend zones resolve correctly: the clip whose edge is nearest
+   * to the mouse wins, regardless of which clip's center is closer. */
+  BetterTimelineTrack *track = nullptr;
+  eBetterTimelineClipResizeEdge edge = BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE;
+  BetterTimelineClip *clip = better_timeline_clip_for_resize_from_region_position(
+      region, sbetter_timeline, event->mval[0], event->mval[1], &track, &edge);
+
+  if (clip == nullptr || track == nullptr || edge == BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE) {
+    return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
+  }
+
+  if (!better_timeline_clip_is_selected(clip)) {
+    better_timeline_clear_selection(sbetter_timeline);
+    better_timeline_clear_clip_selection(sbetter_timeline);
+    better_timeline_clip_set_selected(clip, true);
+    sbetter_timeline->selected_clip_index = better_timeline_clip_global_index_from_ptr(
+        sbetter_timeline, track, clip);
+  }
+
+  auto *resize_data = MEM_new<BetterTimelineClipResizeData>(__func__);
+  resize_data->interaction_mode = BETTER_TIMELINE_CLIP_INTERACTION_RESIZE;
+  resize_data->track = track;
+  resize_data->clip = clip;
+  resize_data->resize_edge = edge;
+  resize_data->initial_start_frame = clip->start_frame;
+  resize_data->initial_end_frame = clip->end_frame;
+  resize_data->mouse_start_frame = ui::view2d_region_to_view_x(&region->v2d, event->mval[0]);
+  resize_data->preview_start_frame = clip->start_frame;
+  resize_data->preview_end_frame = clip->end_frame;
+  /* Shift+drag on Animation clips is reserved for future speed-scale mode. */
+  resize_data->speed_scale_mode = shift && STREQ(clip->clip_type, "BETTER_TIMELINE_CT_ANIMATION");
+
+  op->customdata = resize_data;
+
+  better_timeline_clip_resize_visual_state_update(
+      sbetter_timeline, region, track, clip, clip->start_frame, clip->end_frame);
+  WM_cursor_modal_set(CTX_wm_window(C), WM_CURSOR_X_MOVE);
+  WM_event_add_modal_handler(C, op);
+  ED_area_tag_redraw(area);
+  return OPERATOR_RUNNING_MODAL;
+}
+
+static void BETTER_TIMELINE_OT_clip_resize(wmOperatorType *ot)
+{
+  ot->name = "Resize Better Timeline Clip";
+  ot->idname = "BETTER_TIMELINE_OT_clip_resize";
+  ot->description =
+      "Drag the start or end edge of a clip to resize it. "
+      "Shift+drag on Animation clips is reserved for future speed-scale mode";
+
+  ot->invoke = better_timeline_clip_resize_invoke;
+  ot->modal = better_timeline_clip_resize_modal;
+  ot->poll = better_timeline_clip_resize_poll;
+
+  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO | OPTYPE_BLOCKING;
+}
+
+/** \} */
+
 void better_timeline_clip_ops_register()
 {
   WM_operatortype_append(BETTER_TIMELINE_OT_add_clip);
   WM_operatortype_append(BETTER_TIMELINE_OT_clip_select);
+  WM_operatortype_append(BETTER_TIMELINE_OT_clip_resize);
   WM_operatortype_append(BETTER_TIMELINE_OT_clip_drag);
   WM_operatortype_append(BETTER_TIMELINE_OT_move_clip);
   WM_operatortype_append(BETTER_TIMELINE_OT_delete_clip);

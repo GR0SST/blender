@@ -738,6 +738,20 @@ class TOPBAR_PT_name(Panel):
                 row = row_with_icon(layout, 'NLA')
                 row.prop(item, "name", text="")
                 found = True
+        elif space_type == 'BETTER_TIMELINE':
+            item = space.active_clip
+            if item:
+                layout.label(text="Clip Name")
+                row = row_with_icon(layout, 'ACTION')
+                row.prop(item, "name", text="")
+                found = True
+            else:
+                item = space.active_track
+                if item:
+                    layout.label(text="Track Name")
+                    row = row_with_icon(layout, 'NLA')
+                    row.prop(item, "name", text="")
+                    found = True
         else:
             if mode == 'POSE' or (mode == 'WEIGHT_PAINT' and context.pose_object):
                 layout.label(text="Bone Name")

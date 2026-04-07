@@ -50,6 +50,7 @@ constexpr int BETTER_TIMELINE_SCROLLBAR_WIDTH = 12;
 constexpr int BETTER_TIMELINE_SCROLLBAR_MIN_THUMB_HEIGHT = 28;
 constexpr float BETTER_TIMELINE_REORDER_AUTOSCROLL_TIMER_STEP = 0.02f;
 constexpr const char *BETTER_TIMELINE_KEYMAP_NAME = "Better Timeline";
+constexpr float BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH = 8.0f;
 
 struct BetterTimelinePanelResizeData {
   int initial_mouse_x;
@@ -95,15 +96,32 @@ struct BetterTimelineClipBoxSelectVisualState {
   bool active;
 };
 
+struct BetterTimelineClipResizeVisualState {
+  const ARegion *region;
+  const BetterTimelineTrack *track;
+  const BetterTimelineClip *clip;
+  float preview_start_frame;
+  float preview_end_frame;
+  bool active;
+};
+
 struct SpaceBetterTimeline_Runtime {
   BetterTimelineTrackDragVisualState track_drag_visual_state;
   BetterTimelineClipDragVisualState clip_drag_visual_state;
   BetterTimelineClipBoxSelectVisualState clip_box_select_visual_state;
+  BetterTimelineClipResizeVisualState clip_resize_visual_state;
 };
 
 enum eBetterTimelineClipInteractionMode {
   BETTER_TIMELINE_CLIP_INTERACTION_DRAG = 0,
   BETTER_TIMELINE_CLIP_INTERACTION_BOX_SELECT = 1,
+  BETTER_TIMELINE_CLIP_INTERACTION_RESIZE = 2,
+};
+
+enum eBetterTimelineClipResizeEdge {
+  BETTER_TIMELINE_CLIP_RESIZE_EDGE_NONE = 0,
+  BETTER_TIMELINE_CLIP_RESIZE_EDGE_START = 1,
+  BETTER_TIMELINE_CLIP_RESIZE_EDGE_END = 2,
 };
 
 struct BetterTimelineClipInteractionData {
@@ -152,6 +170,22 @@ struct BetterTimelineClipBoxSelectData {
   bool active;
   bool extend;
   bool toggle;
+};
+
+struct BetterTimelineClipResizeData {
+  eBetterTimelineClipInteractionMode interaction_mode;
+  BetterTimelineTrack *track;
+  BetterTimelineClip *clip;
+  eBetterTimelineClipResizeEdge resize_edge;
+  float initial_start_frame;
+  float initial_end_frame;
+  float mouse_start_frame;
+  float preview_start_frame;
+  float preview_end_frame;
+  /** When true and the clip supports speed scaling (e.g. Animation clips with Shift held),
+   *  the resize operation should adjust playback speed instead of trimming the clip boundary.
+   *  Not yet implemented; reserved for future Unity-style speed-scale drag. */
+  bool speed_scale_mode;
 };
 
 struct BetterTimelineUndoStep {
@@ -254,6 +288,29 @@ void better_timeline_clip_box_select_visual_state_update(const SpaceBetterTimeli
                                                          const ARegion *region,
                                                          const rcti &rect);
 void better_timeline_clip_box_select_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
+eBetterTimelineClipResizeEdge better_timeline_clip_resize_edge_from_region_position(
+    const ARegion *region,
+    const SpaceBetterTimeline *sbetter_timeline,
+    const BetterTimelineTrack *track,
+    const BetterTimelineClip *clip,
+    int region_x,
+    int region_y);
+BetterTimelineClip *better_timeline_clip_for_resize_from_region_position(
+    const ARegion *region,
+    SpaceBetterTimeline *sbetter_timeline,
+    int region_x,
+    int region_y,
+    BetterTimelineTrack **r_track,
+    eBetterTimelineClipResizeEdge *r_edge);
+void better_timeline_clip_resize_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
+                                                     const ARegion *region,
+                                                     const BetterTimelineTrack *track,
+                                                     const BetterTimelineClip *clip,
+                                                     float preview_start_frame,
+                                                     float preview_end_frame);
+void better_timeline_clip_resize_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
+bool better_timeline_clip_resize_visual_state_is_resized_clip(
+    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineClip *clip);
 bool better_timeline_operator_region_poll(bContext *C);
 void better_timeline_view_ops_register();
 void better_timeline_main_region_keymap_init(wmWindowManager *wm, ARegion *region);
