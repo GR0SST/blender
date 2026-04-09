@@ -93,22 +93,17 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 
 ## Project Docs
 
-The `docs/` directory holds reference material organised by topic. **Check the relevant doc before starting any feature work** — it captures constraints, API details, and design rules that would otherwise require a full codebase grep to reconstruct.
+The canonical documentation index is `docs/README.md`. Use it to find the narrowest topic doc before starting feature work.
+
+Recommended read order:
+
+1. `AGENTS.md` for foundational Better Timeline constraints and architecture rules.
+2. `docs/README.md` for the documentation map.
+3. The specific Better Timeline topic doc for the subsystem you are changing.
 
 Do not update Better Timeline docs as part of an implementation attempt until the developer has
 explicitly confirmed the change works in their runtime build. If a fix is still unverified or the
 developer reports it is still broken, keep the notes out of `docs/` and avoid documenting the
 attempt as if it were settled behavior.
-
-```
-docs/
-  tracks.md   — track/clip data model, flag system (lock/mute), type registry,
-                track-list row layout, visual states, checklist for new states
-  drawing.md  — draw pass order, coordinate spaces, scissor pattern,
-                GPU/BLF/roundbox/icon APIs with correct Blender 5.1 namespaces,
-                known constraints and gotchas
-  interactions.md — Better Timeline mouse/keyboard behavior, gesture priority,
-                    keymap ownership, and rules for adding new shortcuts
-```
 
 When a session reveals something non-obvious — an API quirk, a namespace issue, a constraint, a design decision — add it to the appropriate doc before finishing, but only after the developer has confirmed the implemented behavior actually works.

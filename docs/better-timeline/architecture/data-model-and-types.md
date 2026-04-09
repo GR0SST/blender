@@ -1,6 +1,6 @@
-# Tracks — Data Model, Types & Visual States
+# Data Model, Types & Visual States
 
-> Reference for anyone working on track behaviour, track-list visuals, or adding new track properties.
+> Reference for anyone working on typed tracks/clips, compatibility, track-list visuals, or adding new track properties.
 
 ---
 
@@ -20,6 +20,12 @@ struct BetterTimelineTrack {
 ```
 
 **Rule**: never add hardcoded feature fields to this struct. Type-specific state goes in `properties` (IDProperty blob). Global behavioural flags (mute, lock, solo, …) go in `flag`.
+
+Track ownership rules:
+
+- `SpaceBetterTimeline::tracks` is the authoritative track list.
+- `BetterTimelineTrack::clips` is the authoritative per-track clip list.
+- Do not redesign clip storage as a detached global clip container.
 
 ### `flag` bits
 
@@ -69,6 +75,27 @@ struct BetterTimelineTrackType {
 To look up a type at runtime: `ed::better_timeline::track_type_find_from_idname(track->track_type)`.
 
 **Rule**: all compatibility checks must go through the centralised API in `ED_better_timeline.hh`. Never scatter `if (track_type == "...")` conditions across operator code.
+
+## Clip-Type System
+
+Clips are also typed and persist their type idname in `BetterTimelineClip::clip_type`.
+
+Runtime descriptor source:
+
+- `source/blender/editors/include/ED_better_timeline.hh`
+- `source/blender/editors/space_better_timeline/better_timeline_types.cc`
+
+Important API entry points:
+
+- `ed::better_timeline::clip_type_find_from_idname()`
+- `ed::better_timeline::track_accepts_clip_type()`
+- `ed::better_timeline::track_accepts_clip()`
+- `ed::better_timeline::track_can_place_clip()`
+- `ed::better_timeline::clip_types_allow_overlap()`
+
+Practical rule:
+
+- create, move, paste, duplicate, drag/drop, and inline property edits must all converge on the same compatibility and placement checks
 
 ---
 

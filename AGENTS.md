@@ -2,6 +2,11 @@
 
 This fork adds a custom editor type named `Better Timeline` on top of `blender-v5.1-release`.
 
+Documentation routing:
+- `AGENTS.md` is the source of foundational rules and invariants.
+- `docs/README.md` is the canonical documentation index for file maps, workflows, and subsystem docs.
+- `CLAUDE.md` should route agents to `AGENTS.md` first and `docs/README.md` second instead of duplicating the docs index.
+
 Terminology for this editor:
 - `Track List Pane`: the left-side pane that shows track names and, later, track type/status UI.
 - `Timeline Canvas`: the central pane that shows the time ruler, playhead, grid, and later clips.

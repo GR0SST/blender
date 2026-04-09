@@ -4,6 +4,11 @@
 > shortcuts. Use this when adding or changing operators in `better_timeline_ops_view.cc`,
 > `better_timeline_ops_tracks.cc`, or `better_timeline_ops_clips.cc`.
 
+Related docs:
+
+- `docs/better-timeline/ui/layout-and-regions.md` for hit-test rect ownership
+- `docs/better-timeline/workflows/common-change-recipes.md` for shortcut and interaction edit checklists
+
 ---
 
 ## Where Keybindings Live
@@ -41,6 +46,7 @@ claimed by resize first and only fall through to drag when no resize handle is u
 - `Shift + Left Mouse`: range-select tracks
 - `Cmd + Left Mouse`: toggle track in selection
 - `Left Mouse Drag` on track list: reorder selected tracks
+- `Shift + A` with no active selection: open the add-track menu
 - `Delete`, `X`: delete selected tracks
 - `M`: mute/unmute selected tracks
 - `L`: lock/unlock selected tracks
@@ -59,6 +65,7 @@ For `L`, locking a track also clears any selected clips that belong to that trac
 - `Shift + Left Mouse`: clip range-select behavior
 - `Cmd + Left Mouse`: clip toggle-select
 - `Left Mouse Drag` on empty canvas: box-select clips
+- `Shift + A` with an active track/clip selection: open the add-clip menu filtered by the selected track type
 - `G`: move selected clips horizontally
 - `Delete`, `X`: delete selected clips
 - `Shift + D`: duplicate selected clips

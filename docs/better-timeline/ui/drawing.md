@@ -3,6 +3,11 @@
 > Reference for anyone adding new visual elements to the track list or timeline canvas.
 > Unity's Timeline is the visual reference; match its look and feel where possible.
 
+Related docs:
+
+- `docs/better-timeline/ui/layout-and-regions.md` for rect ownership and View2D layout rules
+- `docs/better-timeline/architecture/data-model-and-types.md` for track visual states and typed model rules
+
 ---
 
 ## Two Regions, Two Coordinate Spaces
@@ -184,6 +189,10 @@ if (track_muted) {
 ```
 
 This desaturates to perceptual grey. Use the same formula for any future "inactive" clip state.
+
+Current caveat:
+
+- clip styling is not fully registry-driven yet; some color decisions still key off `clip_type` idname in draw code. If styling becomes type-extensible, move that responsibility toward the registry/model layer instead of adding more hardcoded string checks here.
 
 ---
 
