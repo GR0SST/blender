@@ -96,6 +96,67 @@ static void better_timeline_track_clipboard_clear()
   better_timeline_tracks_free(&g_better_timeline_track_clipboard);
 }
 
+static bool better_timeline_selected_tracks_set_muted(SpaceBetterTimeline *sbetter_timeline,
+                                                      const bool muted)
+{
+  bool changed = false;
+
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (!better_timeline_track_is_selected(track)) {
+      continue;
+    }
+
+    const bool was_muted = (track->flag & BETTER_TIMELINE_TRACK_MUTED) != 0;
+    if (was_muted == muted) {
+      continue;
+    }
+
+    if (muted) {
+      track->flag |= BETTER_TIMELINE_TRACK_MUTED;
+    }
+    else {
+      track->flag &= ~BETTER_TIMELINE_TRACK_MUTED;
+    }
+    changed = true;
+  }
+
+  return changed;
+}
+
+static bool better_timeline_selected_tracks_set_locked(SpaceBetterTimeline *sbetter_timeline,
+                                                       const bool locked)
+{
+  bool changed = false;
+
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (!better_timeline_track_is_selected(track)) {
+      continue;
+    }
+
+    const bool was_locked = (track->flag & BETTER_TIMELINE_TRACK_LOCKED) != 0;
+    if (was_locked == locked) {
+      continue;
+    }
+
+    if (locked) {
+      track->flag |= BETTER_TIMELINE_TRACK_LOCKED;
+      better_timeline_clear_clip_selection_for_track(sbetter_timeline, track);
+    }
+    else {
+      track->flag &= ~BETTER_TIMELINE_TRACK_LOCKED;
+    }
+    changed = true;
+  }
+
+  return changed;
+}
+
 static bool better_timeline_track_select_poll(bContext *C)
 {
   return better_timeline_operator_region_poll(C);
@@ -155,6 +216,7 @@ wmOperatorStatus better_timeline_track_select_click_invoke(bContext *C, const wm
         }
         else {
           track->flag |= BETTER_TIMELINE_TRACK_LOCKED;
+          better_timeline_clear_clip_selection_for_track(sbetter_timeline, track);
         }
         ED_area_tag_redraw(area);
         return OPERATOR_FINISHED;
@@ -548,7 +610,7 @@ static wmOperatorStatus better_timeline_add_track_menu_invoke(bContext *C,
   if (better_timeline_has_selected_clip(sbetter_timeline)) {
     const BetterTimelineTrack *track = better_timeline_track_with_selected_clip_get(
         const_cast<SpaceBetterTimeline *>(sbetter_timeline));
-    if (track == nullptr) {
+    if (track == nullptr || better_timeline_track_is_locked(track)) {
       return OPERATOR_CANCELLED;
     }
 
@@ -585,7 +647,7 @@ static wmOperatorStatus better_timeline_add_track_menu_invoke(bContext *C,
                                              better_timeline_first_selected_track_index(
                                                  sbetter_timeline));
     }
-    if (track == nullptr) {
+    if (track == nullptr || better_timeline_track_is_locked(track)) {
       return OPERATOR_CANCELLED;
     }
 
@@ -910,6 +972,95 @@ static void BETTER_TIMELINE_OT_delete_track(wmOperatorType *ot)
   WM_operator_properties_confirm_or_exec(ot);
 }
 
+static bool better_timeline_toggle_selected_tracks_poll(bContext *C)
+{
+  if (!better_timeline_track_select_poll(C)) {
+    return false;
+  }
+
+  const ScrArea *area = CTX_wm_area(C);
+  const auto *sbetter_timeline = static_cast<const SpaceBetterTimeline *>(area->spacedata.first);
+  return better_timeline_has_selected_track(sbetter_timeline);
+}
+
+static wmOperatorStatus better_timeline_toggle_selected_tracks_mute_exec(bContext *C,
+                                                                         wmOperator *op)
+{
+  ScrArea *area = CTX_wm_area(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+
+  bool should_mute = false;
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (better_timeline_track_is_selected(track) && !better_timeline_track_is_muted(track)) {
+      should_mute = true;
+      break;
+    }
+  }
+
+  better_timeline_undo_push_init(C, op->type->name);
+  if (!better_timeline_selected_tracks_set_muted(sbetter_timeline, should_mute)) {
+    return OPERATOR_CANCELLED;
+  }
+
+  better_timeline_tag_space_state_changed(C);
+  ED_area_tag_redraw(area);
+  return OPERATOR_FINISHED;
+}
+
+static void BETTER_TIMELINE_OT_toggle_selected_tracks_mute(wmOperatorType *ot)
+{
+  ot->name = "Toggle Better Timeline Track Mute";
+  ot->idname = "BETTER_TIMELINE_OT_toggle_selected_tracks_mute";
+  ot->description = "Mute or unmute the selected Better Timeline tracks";
+
+  ot->exec = better_timeline_toggle_selected_tracks_mute_exec;
+  ot->poll = better_timeline_toggle_selected_tracks_poll;
+
+  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
+}
+
+static wmOperatorStatus better_timeline_toggle_selected_tracks_lock_exec(bContext *C,
+                                                                         wmOperator *op)
+{
+  ScrArea *area = CTX_wm_area(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+
+  bool should_lock = false;
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (better_timeline_track_is_selected(track) && !better_timeline_track_is_locked(track)) {
+      should_lock = true;
+      break;
+    }
+  }
+
+  better_timeline_undo_push_init(C, op->type->name);
+  if (!better_timeline_selected_tracks_set_locked(sbetter_timeline, should_lock)) {
+    return OPERATOR_CANCELLED;
+  }
+
+  better_timeline_tag_space_state_changed(C);
+  ED_area_tag_redraw(area);
+  return OPERATOR_FINISHED;
+}
+
+static void BETTER_TIMELINE_OT_toggle_selected_tracks_lock(wmOperatorType *ot)
+{
+  ot->name = "Toggle Better Timeline Track Lock";
+  ot->idname = "BETTER_TIMELINE_OT_toggle_selected_tracks_lock";
+  ot->description = "Lock or unlock the selected Better Timeline tracks";
+
+  ot->exec = better_timeline_toggle_selected_tracks_lock_exec;
+  ot->poll = better_timeline_toggle_selected_tracks_poll;
+
+  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
+}
+
 static bool better_timeline_clear_selection_poll(bContext *C)
 {
   if (!better_timeline_track_select_poll(C)) {
@@ -950,6 +1101,8 @@ void better_timeline_track_ops_register()
   WM_operatortype_append(BETTER_TIMELINE_OT_add_track);
   WM_operatortype_append(BETTER_TIMELINE_OT_add_track_menu);
   WM_operatortype_append(BETTER_TIMELINE_OT_delete_track);
+  WM_operatortype_append(BETTER_TIMELINE_OT_toggle_selected_tracks_mute);
+  WM_operatortype_append(BETTER_TIMELINE_OT_toggle_selected_tracks_lock);
   WM_operatortype_append(BETTER_TIMELINE_OT_clear_selection);
   WM_operatortype_append(BETTER_TIMELINE_OT_track_select);
   WM_operatortype_append(BETTER_TIMELINE_OT_track_reorder);

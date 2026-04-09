@@ -48,7 +48,19 @@ Everything runs inside a single `wmOrtho2_region_pixelspace` push/pop. Passes mu
 5. **Accent bars + button bg** — coloured left stripe, subtle button backgrounds
 6. **Track name text** — `BLF_draw_default`
 7. **Icon pass** — type icon, mute icon, lock icon via `ui::icon_draw_ex`
-8. **Status label boxes** — "Locked"/"Muted" rounded boxes + text, scissored to `body_rect`
+8. **Status label boxes** — "Locked", "Muted", or "Locked / Muted" rounded boxes + text, scissored to `body_rect`
+
+Status labels have two Better Timeline-specific constraints:
+- Clamp the badge against the row's visible slice inside `body_rect`, then keep a small extra
+  inset from the top/bottom canvas edge. This avoids the topmost visible muted/locked badge
+  looking vertically off when it sits close to the scrub boundary.
+- Draw the badge text with the regular UI text path (`ui::style_get_dpi()->widget` +
+  `ui::fontstyle_draw`) instead of hand-placing `BLF_draw_default()`. Measuring the box and
+  drawing the text through the same UI font path keeps centering stable for the first visible
+  status badge too.
+- The icon pass uses `ui::icon_draw_ex()` with a theme-derived mono text color instead of relying
+  on the default icon tint. This keeps the type/mute/lock icons readable on selected rows and
+  dark muted/locked backgrounds.
 
 If you add a new visual layer, decide where in this order it belongs and insert it there. Don't append to the end blindly — icons must always sit above backgrounds.
 

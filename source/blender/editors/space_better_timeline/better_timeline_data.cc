@@ -880,6 +880,23 @@ void better_timeline_clear_clip_selection(SpaceBetterTimeline *sbetter_timeline)
   sbetter_timeline->selected_clip_index = -1;
 }
 
+void better_timeline_clear_clip_selection_for_track(SpaceBetterTimeline *sbetter_timeline,
+                                                    BetterTimelineTrack *track)
+{
+  if (sbetter_timeline == nullptr || track == nullptr) {
+    return;
+  }
+
+  for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+       clip != nullptr;
+       clip = clip->next)
+  {
+    better_timeline_clip_set_selected(clip, false);
+  }
+  sbetter_timeline->selected_clip_index = better_timeline_first_selected_clip_index(
+      sbetter_timeline);
+}
+
 void better_timeline_select_only_track(SpaceBetterTimeline *sbetter_timeline, const int track_index)
 {
   better_timeline_clear_selection(sbetter_timeline);

@@ -138,6 +138,11 @@ static Vector<BetterTimelineClipVisualOrderItem> better_timeline_clips_in_visual
        track != nullptr;
        track = track->next)
   {
+    if (better_timeline_track_is_locked(track)) {
+      global_index += BLI_listbase_count(&track->clips);
+      continue;
+    }
+
     Vector<BetterTimelineClipVisualOrderItem> track_clips;
     int local_index = 0;
     for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first); clip != nullptr;
@@ -295,7 +300,7 @@ BetterTimelineClip *better_timeline_clip_from_region_position(const ARegion *reg
 
   const int row_index = better_timeline_track_from_region_y(region, sbetter_timeline, region_y);
   BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
-  if (track == nullptr) {
+  if (track == nullptr || better_timeline_track_is_locked(track)) {
     return nullptr;
   }
 
@@ -358,6 +363,10 @@ static bool better_timeline_clip_box_select_apply(bContext *C,
        track != nullptr;
        track = track->next)
   {
+    if (better_timeline_track_is_locked(track)) {
+      continue;
+    }
+
     for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
          clip != nullptr;
          clip = clip->next)
@@ -413,6 +422,10 @@ static wmOperatorStatus better_timeline_add_clip_exec(bContext *C, wmOperator *o
   }
   if (track == nullptr) {
     BKE_report(op->reports, RPT_ERROR, "No selected Better Timeline track is available");
+    return OPERATOR_CANCELLED;
+  }
+  if (better_timeline_track_is_locked(track)) {
+    BKE_report(op->reports, RPT_ERROR, "Cannot add a clip to a locked Better Timeline track");
     return OPERATOR_CANCELLED;
   }
 
@@ -1465,7 +1478,7 @@ BetterTimelineClip *better_timeline_clip_for_resize_from_region_position(
 
   const int row_index = better_timeline_track_from_region_y(region, sbetter_timeline, region_y);
   BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
-  if (track == nullptr) {
+  if (track == nullptr || better_timeline_track_is_locked(track)) {
     return nullptr;
   }
 

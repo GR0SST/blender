@@ -95,6 +95,11 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 
 The `docs/` directory holds reference material organised by topic. **Check the relevant doc before starting any feature work** — it captures constraints, API details, and design rules that would otherwise require a full codebase grep to reconstruct.
 
+Do not update Better Timeline docs as part of an implementation attempt until the developer has
+explicitly confirmed the change works in their runtime build. If a fix is still unverified or the
+developer reports it is still broken, keep the notes out of `docs/` and avoid documenting the
+attempt as if it were settled behavior.
+
 ```
 docs/
   tracks.md   — track/clip data model, flag system (lock/mute), type registry,
@@ -102,6 +107,8 @@ docs/
   drawing.md  — draw pass order, coordinate spaces, scissor pattern,
                 GPU/BLF/roundbox/icon APIs with correct Blender 5.1 namespaces,
                 known constraints and gotchas
+  interactions.md — Better Timeline mouse/keyboard behavior, gesture priority,
+                    keymap ownership, and rules for adding new shortcuts
 ```
 
-When a session reveals something non-obvious — an API quirk, a namespace issue, a constraint, a design decision — add it to the appropriate doc before finishing.
+When a session reveals something non-obvious — an API quirk, a namespace issue, a constraint, a design decision — add it to the appropriate doc before finishing, but only after the developer has confirmed the implemented behavior actually works.

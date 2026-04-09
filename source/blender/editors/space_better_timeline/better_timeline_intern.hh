@@ -384,6 +384,8 @@ void better_timeline_select_only_track(SpaceBetterTimeline *sbetter_timeline, in
 int better_timeline_first_selected_track_index(const SpaceBetterTimeline *sbetter_timeline);
 bool better_timeline_has_selected_clip(const SpaceBetterTimeline *sbetter_timeline);
 void better_timeline_clear_clip_selection(SpaceBetterTimeline *sbetter_timeline);
+void better_timeline_clear_clip_selection_for_track(SpaceBetterTimeline *sbetter_timeline,
+                                                    BetterTimelineTrack *track);
 int better_timeline_first_selected_clip_index(const SpaceBetterTimeline *sbetter_timeline);
 int better_timeline_clip_global_index_from_ptr(const SpaceBetterTimeline *sbetter_timeline,
                                                const BetterTimelineTrack *track,

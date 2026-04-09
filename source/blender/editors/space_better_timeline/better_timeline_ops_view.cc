@@ -354,6 +354,8 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
   bool has_add_track_menu = false;
   bool has_delete_track_del = false;
   bool has_delete_track_x = false;
+  bool has_toggle_track_mute = false;
+  bool has_toggle_track_lock = false;
   bool has_clear_selection = false;
   bool has_scrollbar_drag = false;
   bool has_scroll_tracks_up = false;
@@ -440,6 +442,16 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
       else if (kmi->type == EVT_XKEY) {
         has_delete_track_x = true;
       }
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_toggle_selected_tracks_mute")) {
+      has_toggle_track_mute = (kmi->type == EVT_MKEY && kmi->val == KM_PRESS &&
+                               kmi->shift == KM_NOTHING && kmi->ctrl == KM_NOTHING &&
+                               kmi->alt == KM_NOTHING && kmi->oskey == KM_NOTHING);
+    }
+    else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_toggle_selected_tracks_lock")) {
+      has_toggle_track_lock = (kmi->type == EVT_LKEY && kmi->val == KM_PRESS &&
+                               kmi->shift == KM_NOTHING && kmi->ctrl == KM_NOTHING &&
+                               kmi->alt == KM_NOTHING && kmi->oskey == KM_NOTHING);
     }
     else if (STREQ(kmi->idname, "BETTER_TIMELINE_OT_clear_selection")) {
       has_clear_selection = true;
@@ -692,6 +704,24 @@ static void better_timeline_keymap_ensure(wmWindowManager *wm)
     params.modifier = 0;
     params.direction = KM_ANY;
     WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_delete_track", &params);
+  }
+
+  if (!has_toggle_track_mute) {
+    KeyMapItem_Params params{};
+    params.type = EVT_MKEY;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_toggle_selected_tracks_mute", &params);
+  }
+
+  if (!has_toggle_track_lock) {
+    KeyMapItem_Params params{};
+    params.type = EVT_LKEY;
+    params.value = KM_PRESS;
+    params.modifier = 0;
+    params.direction = KM_ANY;
+    WM_keymap_add_item(keymap, "BETTER_TIMELINE_OT_toggle_selected_tracks_lock", &params);
   }
 
   if (!has_clear_selection) {

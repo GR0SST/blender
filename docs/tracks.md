@@ -30,6 +30,15 @@ struct BetterTimelineTrack {
 
 New flags follow the same pattern — add the bit here, add read helpers in `better_timeline_data.cc`, handle visual fallout in `better_timeline_draw.cc`, add click-toggle in `better_timeline_ops_tracks.cc`.
 
+Locked tracks also block clip selection interactions. Their clips are not valid targets for:
+- direct click selection
+- oskey toggle-selection
+- shift range selection
+- box selection
+- resize handle picking
+
+When a track becomes locked, any existing clip selection on that track is cleared immediately.
+
 ---
 
 ## Track-Type System
@@ -78,6 +87,7 @@ All pixel values are unscaled; multiply by `UI_SCALE_FAC` at draw time.
 - **Mute button**: `ICON_HIDE_OFF` / `ICON_HIDE_ON`. Rect from `better_timeline_track_mute_button_rect()`.
 - **Lock button**: `ICON_UNLOCKED` / `ICON_LOCKED`. Rect from `better_timeline_track_lock_button_rect()`.
 - Hit-test helpers (`better_timeline_layout.cc`): `better_timeline_track_from_mute_button_region_pos()` / `…_lock_…()`.
+- Keyboard toggles: `M` mutes/unmutes all selected tracks as a group, `L` locks/unlocks all selected tracks as a group.
 
 ---
 
@@ -90,7 +100,7 @@ All pixel values are unscaled; multiply by `UI_SCALE_FAC` at draw time.
 | Muted    | + black overlay `0.28` α · dimmed text `×0.55`  | + black overlay `0.22` α · clips desaturated    |
 | Locked   | + black overlay `0.28` α                        | + black overlay `0.22` α · diagonal stripes     |
 
-Both muted and locked show a **status label** (rounded box) centered horizontally in the canvas at the track's row height. Boxes are always the same size (max of "Muted"/"Locked" text extents + padding).
+Muted and locked tracks show a **status label** (rounded box) centered horizontally in the canvas at the track's row height. Boxes are always the same size (max of the current label variants + padding). A track with both flags shows `Locked / Muted`.
 
 ---
 
@@ -103,3 +113,4 @@ Both muted and locked show a **status label** (rounded box) centered horizontall
 5. Status label if needed — follow the "Locked"/"Muted" label pattern (uniform box size, `ui::draw_roundbox_4fv`, scissored to `body_rect`)
 6. Button rect functions in `better_timeline_layout.cc`
 7. Click-toggle in `better_timeline_track_select_click_invoke()` with `better_timeline_undo_push_init()`
+8. Group hotkeys in `better_timeline_ops_tracks.cc` if the state should apply to the current selected track set (`M`, `L`, future solo/hide toggles, etc.)
