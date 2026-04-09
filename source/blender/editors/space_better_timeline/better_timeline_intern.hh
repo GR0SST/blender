@@ -51,6 +51,10 @@ constexpr int BETTER_TIMELINE_SCROLLBAR_MIN_THUMB_HEIGHT = 28;
 constexpr float BETTER_TIMELINE_REORDER_AUTOSCROLL_TIMER_STEP = 0.02f;
 constexpr const char *BETTER_TIMELINE_KEYMAP_NAME = "Better Timeline";
 constexpr float BETTER_TIMELINE_CLIP_RESIZE_HANDLE_WIDTH = 8.0f;
+/** Width/height of track list mute and lock buttons (unscaled pixels). */
+constexpr int BETTER_TIMELINE_TRACK_BUTTON_SIZE = 20;
+/** Width of the coloured type accent bar on the left edge of each track row (unscaled pixels). */
+constexpr int BETTER_TIMELINE_TRACK_ACCENT_WIDTH = 4;
 
 struct BetterTimelinePanelResizeData {
   int initial_mouse_x;
@@ -395,5 +399,22 @@ BetterTimelineClip *better_timeline_clip_from_region_position(
     BetterTimelineTrack **r_track);
 void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl);
 void better_timeline_space_blend_write(BlendWriter *writer, SpaceLink *sl);
+
+bool better_timeline_track_is_muted(const BetterTimelineTrack *track);
+bool better_timeline_track_is_locked(const BetterTimelineTrack *track);
+rcti better_timeline_track_mute_button_rect(const ARegion *region,
+                                            const SpaceBetterTimeline *sbetter_timeline,
+                                            int row_index);
+rcti better_timeline_track_lock_button_rect(const ARegion *region,
+                                            const SpaceBetterTimeline *sbetter_timeline,
+                                            int row_index);
+int better_timeline_track_from_mute_button_region_pos(const ARegion *region,
+                                                      const SpaceBetterTimeline *sbetter_timeline,
+                                                      int region_x,
+                                                      int region_y);
+int better_timeline_track_from_lock_button_region_pos(const ARegion *region,
+                                                      const SpaceBetterTimeline *sbetter_timeline,
+                                                      int region_x,
+                                                      int region_y);
 
 }  // namespace blender

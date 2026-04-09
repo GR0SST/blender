@@ -340,6 +340,16 @@ bool better_timeline_track_is_selected(const BetterTimelineTrack *track)
   return track != nullptr && track->selected != 0;
 }
 
+bool better_timeline_track_is_muted(const BetterTimelineTrack *track)
+{
+  return track != nullptr && (track->flag & BETTER_TIMELINE_TRACK_MUTED) != 0;
+}
+
+bool better_timeline_track_is_locked(const BetterTimelineTrack *track)
+{
+  return track != nullptr && (track->flag & BETTER_TIMELINE_TRACK_LOCKED) != 0;
+}
+
 void better_timeline_track_set_selected(BetterTimelineTrack *track, const bool selected)
 {
   if (track != nullptr) {

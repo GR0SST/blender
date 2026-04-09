@@ -47,6 +47,10 @@ struct BetterTimelineTrackType {
   bool (*clip_type_poll)(const BetterTimelineTrackType *track_type,
                          const BetterTimelineClipType *clip_type) = nullptr;
   ExtensionRNA rna_ext = {};
+  /** RGB accent color for the left stripe and track type icon tint. */
+  float color[3] = {0.5f, 0.5f, 0.5f};
+  /** BIFIconID for the track type icon shown in the track list pane. */
+  int icon = 0;
 };
 
 void register_builtin_types();

@@ -17,6 +17,7 @@
 #include "BLI_utildefines.h"
 
 #include "ED_better_timeline.hh"
+#include "UI_resources.hh"
 
 namespace blender::ed::better_timeline {
 
@@ -66,7 +67,9 @@ static void ensure_builtin_types_registered()
   auto add_track_type = [](const char *idname,
                            const char *label,
                            const char *description,
-                           std::initializer_list<const char *> compatible_clip_type_ids) {
+                           std::initializer_list<const char *> compatible_clip_type_ids,
+                           const float color[3],
+                           const int icon) {
     auto track_type = std::make_unique<BetterTimelineTrackType>();
     STRNCPY_UTF8(track_type->idname, idname);
     STRNCPY_UTF8(track_type->label, label);
@@ -74,6 +77,10 @@ static void ensure_builtin_types_registered()
     for (const char *clip_type_idname : compatible_clip_type_ids) {
       track_type->compatible_clip_type_ids.append(clip_type_idname);
     }
+    track_type->color[0] = color[0];
+    track_type->color[1] = color[1];
+    track_type->color[2] = color[2];
+    track_type->icon = icon;
     track_type_register(std::move(track_type));
   };
 
@@ -90,18 +97,33 @@ static void ensure_builtin_types_registered()
                 "Spline data clip for spline-oriented tracks",
                 BetterTimelineClipBlendMode::Blendable);
 
-  add_track_type(BETTER_TIMELINE_TRACK_TYPE_TEST,
-                 "Test Track",
-                 "Placeholder track type for early Better Timeline development",
-                 {BETTER_TIMELINE_CLIP_TYPE_TEST});
-  add_track_type(BETTER_TIMELINE_TRACK_TYPE_ANIMATION,
-                 "Animation Track",
-                 "Track type that accepts animation clips",
-                 {BETTER_TIMELINE_CLIP_TYPE_ANIMATION});
-  add_track_type(BETTER_TIMELINE_TRACK_TYPE_SPLINE,
-                 "Spline Track",
-                 "Track type that accepts spline clips",
-                 {BETTER_TIMELINE_CLIP_TYPE_SPLINE});
+  {
+    static const float test_color[3] = {0.38f, 0.51f, 0.68f};
+    add_track_type(BETTER_TIMELINE_TRACK_TYPE_TEST,
+                   "Test Track",
+                   "Placeholder track type for early Better Timeline development",
+                   {BETTER_TIMELINE_CLIP_TYPE_TEST},
+                   test_color,
+                   ICON_SEQ_SEQUENCER);
+  }
+  {
+    static const float anim_color[3] = {0.35f, 0.62f, 0.43f};
+    add_track_type(BETTER_TIMELINE_TRACK_TYPE_ANIMATION,
+                   "Animation Track",
+                   "Track type that accepts animation clips",
+                   {BETTER_TIMELINE_CLIP_TYPE_ANIMATION},
+                   anim_color,
+                   ICON_ACTION);
+  }
+  {
+    static const float spline_color[3] = {0.72f, 0.52f, 0.22f};
+    add_track_type(BETTER_TIMELINE_TRACK_TYPE_SPLINE,
+                   "Spline Track",
+                   "Track type that accepts spline clips",
+                   {BETTER_TIMELINE_CLIP_TYPE_SPLINE},
+                   spline_color,
+                   ICON_CURVE_DATA);
+  }
 }
 
 void register_builtin_types()

@@ -122,6 +122,46 @@ wmOperatorStatus better_timeline_track_select_click_invoke(bContext *C, const wm
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
   }
 
+  /* Mute button click: toggle track muted flag. */
+  {
+    const int mute_row = better_timeline_track_from_mute_button_region_pos(
+        region, sbetter_timeline, event->mval[0], event->mval[1]);
+    if (mute_row >= 0) {
+      BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, mute_row);
+      if (track != nullptr) {
+        better_timeline_undo_push_init(C, "Toggle Track Mute");
+        if (track->flag & BETTER_TIMELINE_TRACK_MUTED) {
+          track->flag &= ~BETTER_TIMELINE_TRACK_MUTED;
+        }
+        else {
+          track->flag |= BETTER_TIMELINE_TRACK_MUTED;
+        }
+        ED_area_tag_redraw(area);
+        return OPERATOR_FINISHED;
+      }
+    }
+  }
+
+  /* Lock button click: toggle track locked flag. */
+  {
+    const int lock_row = better_timeline_track_from_lock_button_region_pos(
+        region, sbetter_timeline, event->mval[0], event->mval[1]);
+    if (lock_row >= 0) {
+      BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, lock_row);
+      if (track != nullptr) {
+        better_timeline_undo_push_init(C, "Toggle Track Lock");
+        if (track->flag & BETTER_TIMELINE_TRACK_LOCKED) {
+          track->flag &= ~BETTER_TIMELINE_TRACK_LOCKED;
+        }
+        else {
+          track->flag |= BETTER_TIMELINE_TRACK_LOCKED;
+        }
+        ED_area_tag_redraw(area);
+        return OPERATOR_FINISHED;
+      }
+    }
+  }
+
   const int clicked_track_index = better_timeline_track_from_region_y(
       region, sbetter_timeline, event->mval[1]);
   const bool shift = (event->modifier & KM_SHIFT) != 0;

@@ -1071,13 +1071,23 @@ struct BetterTimelineClip {
   IDProperty *properties = nullptr;
 };
 
+/** Flags for BetterTimelineTrack::flag (eBetterTimelineTrackFlag). */
+typedef enum eBetterTimelineTrackFlag {
+  /** Track is muted: clips play back greyed-out and are non-functional. */
+  BETTER_TIMELINE_TRACK_MUTED = (1 << 0),
+  /** Track is locked: clips cannot be moved, resized, or deleted. */
+  BETTER_TIMELINE_TRACK_LOCKED = (1 << 1),
+} eBetterTimelineTrackFlag;
+
 struct BetterTimelineTrack {
   BetterTimelineTrack *next = nullptr, *prev = nullptr;
 
   char name[64] = "";
   char track_type[64] = "";
   char selected = 0;
-  char _pad0[7] = {};
+  /** #eBetterTimelineTrackFlag */
+  char flag = 0;
+  char _pad0[6] = {};
 
   ListBaseT<BetterTimelineClip> clips = {nullptr, nullptr};
   IDProperty *properties = nullptr;

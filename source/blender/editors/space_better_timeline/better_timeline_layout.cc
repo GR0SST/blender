@@ -621,4 +621,70 @@ void better_timeline_view_sync(ARegion *region,
   better_timeline_view2d_apply_mask(region, v2d, sbetter_timeline);
 }
 
+rcti better_timeline_track_mute_button_rect(const ARegion *region,
+                                            const SpaceBetterTimeline *sbetter_timeline,
+                                            const int row_index)
+{
+  const int left_panel_width = better_timeline_left_panel_width(region, sbetter_timeline);
+  const int btn_size = int(BETTER_TIMELINE_TRACK_BUTTON_SIZE * UI_SCALE_FAC);
+  const int btn_margin = int(4.0f * UI_SCALE_FAC);
+  const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+  const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+  const int row_center_y = int((y_min + y_max) * 0.5f);
+  const int btn_x_max = left_panel_width - btn_margin - btn_size;
+  const int btn_x_min = btn_x_max - btn_size;
+  return rcti{btn_x_min, btn_x_max, row_center_y - btn_size / 2, row_center_y + btn_size / 2};
+}
+
+rcti better_timeline_track_lock_button_rect(const ARegion *region,
+                                            const SpaceBetterTimeline *sbetter_timeline,
+                                            const int row_index)
+{
+  const int left_panel_width = better_timeline_left_panel_width(region, sbetter_timeline);
+  const int btn_size = int(BETTER_TIMELINE_TRACK_BUTTON_SIZE * UI_SCALE_FAC);
+  const int btn_margin = int(4.0f * UI_SCALE_FAC);
+  const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+  const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+  const int row_center_y = int((y_min + y_max) * 0.5f);
+  const int btn_x_max = left_panel_width - btn_margin;
+  const int btn_x_min = btn_x_max - btn_size;
+  return rcti{btn_x_min, btn_x_max, row_center_y - btn_size / 2, row_center_y + btn_size / 2};
+}
+
+int better_timeline_track_from_mute_button_region_pos(const ARegion *region,
+                                                      const SpaceBetterTimeline *sbetter_timeline,
+                                                      const int region_x,
+                                                      const int region_y)
+{
+  const int track_count = better_timeline_track_count(sbetter_timeline);
+  for (int i = 0; i < track_count; i++) {
+    if (!better_timeline_row_is_visible(region, sbetter_timeline, i)) {
+      continue;
+    }
+    const rcti btn_rect = better_timeline_track_mute_button_rect(region, sbetter_timeline, i);
+    if (BLI_rcti_isect_pt(&btn_rect, region_x, region_y)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int better_timeline_track_from_lock_button_region_pos(const ARegion *region,
+                                                      const SpaceBetterTimeline *sbetter_timeline,
+                                                      const int region_x,
+                                                      const int region_y)
+{
+  const int track_count = better_timeline_track_count(sbetter_timeline);
+  for (int i = 0; i < track_count; i++) {
+    if (!better_timeline_row_is_visible(region, sbetter_timeline, i)) {
+      continue;
+    }
+    const rcti btn_rect = better_timeline_track_lock_button_rect(region, sbetter_timeline, i);
+    if (BLI_rcti_isect_pt(&btn_rect, region_x, region_y)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 }  // namespace blender

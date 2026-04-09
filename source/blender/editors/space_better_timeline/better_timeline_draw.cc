@@ -33,6 +33,7 @@
 
 #include "UI_interface.hh"
 #include "UI_interface_c.hh"
+#include "UI_interface_icons.hh"
 #include "UI_resources.hh"
 #include "UI_view2d.hh"
 
@@ -694,6 +695,7 @@ static void better_timeline_draw_clips(const ARegion *region,
       continue;
     }
 
+    const bool track_muted = better_timeline_track_is_muted(track);
     const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
     const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
     const float clip_y_max = row_y_max - (6.0f * UI_SCALE_FAC);
@@ -732,6 +734,16 @@ static void better_timeline_draw_clips(const ARegion *region,
 
       float clip_color[4];
       better_timeline_clip_color_get(clip, clip_color);
+      if (track_muted) {
+        /* Desaturate to a flat grey to signal the track is muted. */
+        const float lum = clip_color[0] * 0.2126f + clip_color[1] * 0.7152f +
+                          clip_color[2] * 0.0722f;
+        const float grey = lum * 0.5f + 0.22f;
+        clip_color[0] = grey;
+        clip_color[1] = grey;
+        clip_color[2] = grey;
+        clip_color[3] *= 0.55f;
+      }
       immUniformColor4f(clip_color[0], clip_color[1], clip_color[2], clip_color[3]);
       immRectf(pos, start_x, snapped_clip_y_min, end_x, snapped_clip_y_max);
 
@@ -1209,6 +1221,65 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
   immUnbindProgram();
   GPU_blend(GPU_BLEND_NONE);
 
+  /* --- Accent bars and button backgrounds (geometry pass addition) --- */
+  GPU_blend(GPU_BLEND_ALPHA);
+  {
+    GPUVertFormat *fmt2 = immVertexFormat();
+    const uint pos2 = GPU_vertformat_attr_add(fmt2, "pos", gpu::VertAttrType::SFLOAT_32_32);
+    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+
+    better_timeline_clip_begin(region, content_rect, &content_clip_state);
+    for (int row_index = 0; row_index < track_count; row_index++) {
+      if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+        continue;
+      }
+      const BetterTimelineTrack *track = better_timeline_track_at_index(
+          sbetter_timeline, row_index);
+      if (track == nullptr) {
+        continue;
+      }
+      const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+      const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+      const float accent_w = float(BETTER_TIMELINE_TRACK_ACCENT_WIDTH) * UI_SCALE_FAC;
+
+      /* Left accent bar: coloured stripe representing the track type. */
+      float accent_color[3] = {0.5f, 0.5f, 0.5f};
+      const ed::better_timeline::BetterTimelineTrackType *tt =
+          ed::better_timeline::track_type_find_from_idname(track->track_type);
+      if (tt != nullptr) {
+        accent_color[0] = tt->color[0];
+        accent_color[1] = tt->color[1];
+        accent_color[2] = tt->color[2];
+      }
+      const float accent_alpha = better_timeline_track_is_muted(track) ? 0.35f : 0.88f;
+      const float accent_pad = 1.0f * UI_SCALE_FAC;
+      immUniformColor4f(accent_color[0], accent_color[1], accent_color[2], accent_alpha);
+      immRectf(pos2, accent_pad, y_min + accent_pad, accent_w, y_max - accent_pad);
+
+      /* Subtle button background for mute/lock button zone. */
+      const rcti mute_rect = better_timeline_track_mute_button_rect(
+          region, sbetter_timeline, row_index);
+      const rcti lock_rect = better_timeline_track_lock_button_rect(
+          region, sbetter_timeline, row_index);
+      const float btn_bg_alpha = 0.12f;
+      immUniformColor4f(1.0f, 1.0f, 1.0f, btn_bg_alpha);
+      immRectf(pos2,
+               float(mute_rect.xmin),
+               float(mute_rect.ymin),
+               float(mute_rect.xmax),
+               float(mute_rect.ymax));
+      immRectf(pos2,
+               float(lock_rect.xmin),
+               float(lock_rect.ymin),
+               float(lock_rect.xmax),
+               float(lock_rect.ymax));
+    }
+    better_timeline_clip_end(content_clip_state);
+    immUnbindProgram();
+  }
+  GPU_blend(GPU_BLEND_NONE);
+
+  /* --- Track name text pass --- */
   better_timeline_clip_begin(region, content_rect, &content_clip_state);
   for (int row_index = 0; row_index < track_count; row_index++) {
     if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
@@ -1222,30 +1293,70 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     ui::theme::get_color_4ubv(better_timeline_track_is_selected(track) ? TH_HEADER_TEXT_HI :
                                                                            TH_TEXT,
                               text_color);
+    if (better_timeline_track_is_muted(track)) {
+      text_color[3] = uchar(text_color[3] * 0.55f);
+    }
     BLF_color4ubv(BLF_default(), text_color);
+
+    /* Name starts after: accent bar + gap + icon area + gap. */
+    const float accent_w = float(BETTER_TIMELINE_TRACK_ACCENT_WIDTH) * UI_SCALE_FAC;
+    const float icon_area = float(BETTER_TIMELINE_TRACK_BUTTON_SIZE) * UI_SCALE_FAC;
+    const float name_x = accent_w + (4.0f * UI_SCALE_FAC) + icon_area + (4.0f * UI_SCALE_FAC);
     const float y = better_timeline_row_ymin(region, sbetter_timeline, row_index) +
                     (BETTER_TIMELINE_ROW_HEIGHT * 0.5f) - (5.0f * UI_SCALE_FAC);
-    BLF_draw_default(16.0f * UI_SCALE_FAC, y, 0.0f, track->name, BLF_DRAW_STR_DUMMY_MAX);
-
-    const char *track_type_label = better_timeline_track_type_label_get(track);
-    if (track_type_label[0] != '\0') {
-      uchar secondary_text_color[4] = {
-          text_color[0],
-          text_color[1],
-          text_color[2],
-          static_cast<uchar>(better_timeline_track_is_selected(track) ? 180 : 128)};
-      BLF_color4ubv(BLF_default(), secondary_text_color);
-      const float label_width = BLF_width(BLF_default(),
-                                          track_type_label,
-                                          BLI_strnlen(track_type_label,
-                                                      ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX));
-      const float label_x = std::max(16.0f * UI_SCALE_FAC,
-                                     float(left_panel_width) - label_width - (16.0f * UI_SCALE_FAC));
-      BLF_draw_default(
-          label_x, y, 0.0f, track_type_label, ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX);
-    }
+    BLF_draw_default(name_x, y, 0.0f, track->name, BLF_DRAW_STR_DUMMY_MAX);
   }
   better_timeline_clip_end(content_clip_state);
+
+  /* --- Icon pass: track type icon + mute/lock button icons --- */
+  GPU_blend(GPU_BLEND_ALPHA);
+  for (int row_index = 0; row_index < track_count; row_index++) {
+    if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+      continue;
+    }
+    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    if (track == nullptr) {
+      continue;
+    }
+    const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+    const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+    const float row_center_y = (y_min + y_max) * 0.5f;
+    const float icon_size = float(UI_ICON_SIZE);
+    const float accent_w = float(BETTER_TIMELINE_TRACK_ACCENT_WIDTH) * UI_SCALE_FAC;
+
+    /* Track type icon. */
+    const ed::better_timeline::BetterTimelineTrackType *tt =
+        ed::better_timeline::track_type_find_from_idname(track->track_type);
+    const int type_icon = (tt != nullptr) ? tt->icon : ICON_SEQUENCE;
+    const float type_icon_x = accent_w + (2.0f * UI_SCALE_FAC);
+    const float type_icon_y = row_center_y - icon_size * 0.5f;
+    const float icon_alpha = better_timeline_track_is_muted(track) ? 0.35f : 0.80f;
+    ui::icon_draw_ex(type_icon_x, type_icon_y, type_icon, 1.0f / UI_SCALE_FAC, icon_alpha, 0.0f,
+                     nullptr, false, nullptr);
+
+    /* Mute (eye) button icon. */
+    const int mute_icon = better_timeline_track_is_muted(track) ? ICON_HIDE_ON : ICON_HIDE_OFF;
+    const rcti mute_rect = better_timeline_track_mute_button_rect(
+        region, sbetter_timeline, row_index);
+    const float mute_icon_x = mute_rect.xmin +
+                               (BLI_rcti_size_x(&mute_rect) - icon_size) * 0.5f;
+    const float mute_icon_y = row_center_y - icon_size * 0.5f;
+    ui::icon_draw_ex(mute_icon_x, mute_icon_y, mute_icon, 1.0f / UI_SCALE_FAC,
+                     better_timeline_track_is_muted(track) ? 0.45f : 0.60f, 0.0f,
+                     nullptr, false, nullptr);
+
+    /* Lock button icon. */
+    const int lock_icon = better_timeline_track_is_locked(track) ? ICON_LOCKED : ICON_UNLOCKED;
+    const rcti lock_rect = better_timeline_track_lock_button_rect(
+        region, sbetter_timeline, row_index);
+    const float lock_icon_x = lock_rect.xmin +
+                               (BLI_rcti_size_x(&lock_rect) - icon_size) * 0.5f;
+    const float lock_icon_y = row_center_y - icon_size * 0.5f;
+    ui::icon_draw_ex(lock_icon_x, lock_icon_y, lock_icon, 1.0f / UI_SCALE_FAC,
+                     better_timeline_track_is_locked(track) ? 0.90f : 0.60f, 0.0f,
+                     nullptr, false, nullptr);
+  }
+  GPU_blend(GPU_BLEND_NONE);
 
   GPU_matrix_pop_projection();
 }
