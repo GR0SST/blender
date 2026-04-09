@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a fork of `blender-v5.1-release` that adds a **Better Timeline** editor — a clip-oriented custom editor type implemented in C++ as a first-class Blender space, alongside a Python UI layer. It is not a Python add-on; it is compiled into Blender itself.
+This repository has one purpose: developing the **Better Timeline** editor for Blender.
+
+Better Timeline is a clip-oriented, track-based timeline editor built as a first-class Blender space (C++ + Python, compiled in — not an add-on). It is heavily inspired by **Unity's Timeline** and aims to match its look, feel, and workflow as closely as makes sense within Blender's architecture. Unity's Timeline is the primary design reference for layout decisions, UX patterns, and feature priorities.
+
+The fork base is `blender-v5.1-release`. Everything outside the Better Timeline subsystem is unchanged and should not be modified.
 
 `AGENTS.md` in the root contains detailed architecture notes, design constraints, and rules that must be treated as foundational. Read it before making architectural decisions.
 
@@ -13,11 +17,12 @@ This is a fork of `blender-v5.1-release` that adds a **Better Timeline** editor 
 All scripts default `BUILD_DIR` to `../build_darwin` (sibling of the repo root). Override via `export BUILD_DIR=/path/to/build`.
 
 ```bash
-./dev-build.sh              # ninja -C $BUILD_DIR blender
-./dev-install.sh            # ninja -C $BUILD_DIR install
-./dev-run.sh                # runs Blender.app with --factory-startup
-./dev-build-install-run.sh  # all three sequentially
+./dev-build.sh     # ninja -C $BUILD_DIR blender   ← use this to compile
+./dev-install.sh   # ninja -C $BUILD_DIR install   ← use this to install after build
+./dev-run.sh       # runs Blender.app with --factory-startup
 ```
+
+> **IMPORTANT**: Do **NOT** use `./dev-build-install-run.sh`. That script is reserved for the developer's own workflow. Always run `dev-build.sh` and `dev-install.sh` separately, then let the developer run Blender manually (or use `dev-run.sh` only if explicitly asked).
 
 The build system is CMake + Ninja. First-time CMake configuration must be done manually (see Blender's official build docs). There is no single-test runner; use `ctest` in the build directory for automated tests.
 
@@ -85,3 +90,18 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 - **Timeline Canvas**: central pane with ruler, playhead, grid, clips
 - **Properties Pane**: right sidebar (`N` key), uses `RGN_TYPE_UI` — do not reintroduce custom-drawn sidebar content in the window region
 - **Splitter**: resizable divider between Track List Pane and Timeline Canvas; width stored in `SpaceBetterTimeline::track_panel_width`
+
+## Project Docs
+
+The `docs/` directory holds reference material organised by topic. **Check the relevant doc before starting any feature work** — it captures constraints, API details, and design rules that would otherwise require a full codebase grep to reconstruct.
+
+```
+docs/
+  tracks.md   — track/clip data model, flag system (lock/mute), type registry,
+                track-list row layout, visual states, checklist for new states
+  drawing.md  — draw pass order, coordinate spaces, scissor pattern,
+                GPU/BLF/roundbox/icon APIs with correct Blender 5.1 namespaces,
+                known constraints and gotchas
+```
+
+When a session reveals something non-obvious — an API quirk, a namespace issue, a constraint, a design decision — add it to the appropriate doc before finishing.

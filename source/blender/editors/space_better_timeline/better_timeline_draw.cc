@@ -197,6 +197,34 @@ static void better_timeline_clip_color_get(const BetterTimelineClip *clip, float
   }
 }
 
+/** Draw 45° hatching lines (bottom-left → top-right) across [x0,y0]→[x1,y1].
+ *  Call with a program already bound and colour already set.
+ *  The active scissor rect will clip any overflow. */
+static void better_timeline_draw_diagonal_stripes(const float x0,
+                                                  const float y0,
+                                                  const float x1,
+                                                  const float y1,
+                                                  const uint pos)
+{
+  const float h = y1 - y0;
+  if (h <= 0.0f || x1 <= x0) {
+    return;
+  }
+  const float spacing = 11.0f * UI_SCALE_FAC;
+  const float first_bx = floorf((x0 - h) / spacing) * spacing;
+  const int line_count = int(ceilf((x1 - first_bx) / spacing)) + 2;
+  if (line_count <= 0) {
+    return;
+  }
+  immBegin(GPU_PRIM_LINES, line_count * 2);
+  for (int i = 0; i < line_count; i++) {
+    const float bx = first_bx + float(i) * spacing;
+    immVertex2f(pos, bx, y0);
+    immVertex2f(pos, bx + h, y1);
+  }
+  immEnd();
+}
+
 static void better_timeline_clip_rect_pixel_snap(float *r_start_x,
                                                  float *r_end_x,
                                                  float *r_clip_y_min,
@@ -1118,6 +1146,7 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
 
     const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    const bool track_muted = better_timeline_track_is_muted(track);
     if (better_timeline_track_is_selected(track)) {
       immUniformColor4f(0.25f, 0.40f, 0.72f, 0.92f);
       immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
@@ -1140,6 +1169,22 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
 
       immUniformColor4f(1.0f, 1.0f, 1.0f, 0.055f);
+      immRectf(pos, float(left_panel_width), y_min, float(region->winx), y_max);
+    }
+
+    /* Muted track: draw a dark overlay on both panes so the row reads as inactive. */
+    if (track_muted) {
+      immUniformColor4f(0.0f, 0.0f, 0.0f, 0.28f);
+      immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
+      immUniformColor4f(0.0f, 0.0f, 0.0f, 0.22f);
+      immRectf(pos, float(left_panel_width), y_min, float(region->winx), y_max);
+    }
+
+    /* Locked track: same dark overlay as muted. */
+    if (better_timeline_track_is_locked(track)) {
+      immUniformColor4f(0.0f, 0.0f, 0.0f, 0.28f);
+      immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
+      immUniformColor4f(0.0f, 0.0f, 0.0f, 0.22f);
       immRectf(pos, float(left_panel_width), y_min, float(region->winx), y_max);
     }
   }
@@ -1219,6 +1264,34 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
   }
 
   immUnbindProgram();
+  GPU_blend(GPU_BLEND_NONE);
+
+  /* --- Diagonal stripe pass: muted and locked tracks --- */
+  GPU_blend(GPU_BLEND_ALPHA);
+  GPU_line_width(1.0f);
+  better_timeline_clip_begin(region, content_rect, &content_clip_state);
+  {
+    GPUVertFormat *fmt_s = immVertexFormat();
+    const uint pos_s = GPU_vertformat_attr_add(fmt_s, "pos", gpu::VertAttrType::SFLOAT_32_32);
+    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+    immUniformColor4f(1.0f, 1.0f, 1.0f, 0.045f);
+    for (int row_index = 0; row_index < track_count; row_index++) {
+      if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+        continue;
+      }
+      const BetterTimelineTrack *track_s = better_timeline_track_at_index(sbetter_timeline,
+                                                                          row_index);
+      if (!better_timeline_track_is_locked(track_s)) {
+        continue;
+      }
+      const float ys_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+      const float ys_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+      better_timeline_draw_diagonal_stripes(
+          0.0f, ys_min, float(region->winx), ys_max, pos_s);
+    }
+    immUnbindProgram();
+  }
+  better_timeline_clip_end(content_clip_state);
   GPU_blend(GPU_BLEND_NONE);
 
   /* --- Accent bars and button backgrounds (geometry pass addition) --- */
@@ -1357,6 +1430,74 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
                      nullptr, false, nullptr);
   }
   GPU_blend(GPU_BLEND_NONE);
+
+  /* --- "Locked" / "Muted" status label in the timeline canvas --- */
+  {
+    const rcti body_rect_lbl = better_timeline_body_rect(region, sbetter_timeline);
+    const float canvas_center_x = (float(body_rect_lbl.xmin) + float(body_rect_lbl.xmax)) * 0.5f;
+    const float pad_x = 9.0f * UI_SCALE_FAC;
+    const float pad_y = 5.0f * UI_SCALE_FAC;
+    const float box_radius = 3.0f * UI_SCALE_FAC;
+
+    /* Pre-compute uniform box size — take the max of both strings so every
+     * box is the same width/height regardless of which label is shown. */
+    const float max_lbl_w = std::max(
+        BLF_width(BLF_default(), "Muted", BLF_DRAW_STR_DUMMY_MAX),
+        BLF_width(BLF_default(), "Locked", BLF_DRAW_STR_DUMMY_MAX));
+    const float max_lbl_h = std::max(
+        BLF_height(BLF_default(), "Muted", BLF_DRAW_STR_DUMMY_MAX),
+        BLF_height(BLF_default(), "Locked", BLF_DRAW_STR_DUMMY_MAX));
+    const float box_w = max_lbl_w + pad_x * 2.0f;
+    const float box_h = max_lbl_h + pad_y * 2.0f;
+    /* Box x-coords are the same for every row. */
+    const float bx0 = canvas_center_x - box_w * 0.5f;
+    const float bx1 = bx0 + box_w;
+
+    BetterTimelineClipState lbl_clip_state;
+    better_timeline_clip_begin(region, body_rect_lbl, &lbl_clip_state);
+    GPU_blend(GPU_BLEND_ALPHA);
+
+    ui::draw_roundbox_corner_set(ui::CNR_ALL);
+
+    for (int row_index = 0; row_index < track_count; row_index++) {
+      if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+        continue;
+      }
+      const BetterTimelineTrack *track_l = better_timeline_track_at_index(sbetter_timeline,
+                                                                          row_index);
+      const bool lbl_muted = better_timeline_track_is_muted(track_l);
+      const bool lbl_locked = better_timeline_track_is_locked(track_l);
+      if (!lbl_muted && !lbl_locked) {
+        continue;
+      }
+      const char *lbl_text = lbl_locked ? "Locked" : "Muted";
+      const float yl_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+      const float yl_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+      const float row_cy = (yl_min + yl_max) * 0.5f;
+      const float by0 = row_cy - box_h * 0.5f;
+      const float by1 = by0 + box_h;
+
+      /* Rounded background. */
+      const rctf box_rctf = {bx0, bx1, by0, by1};
+      const float bg_col[4] = {0.12f, 0.12f, 0.12f, 0.88f};
+      ui::draw_roundbox_4fv(&box_rctf, true, box_radius, bg_col);
+
+      /* Rounded border. */
+      const float border_col[4] = {0.50f, 0.50f, 0.50f, 0.80f};
+      ui::draw_roundbox_4fv(&box_rctf, false, box_radius, border_col);
+
+      /* Text: individually centered within the uniform box. */
+      const float lbl_text_w = BLF_width(BLF_default(), lbl_text, BLF_DRAW_STR_DUMMY_MAX);
+      const float lbl_text_h = BLF_height(BLF_default(), lbl_text, BLF_DRAW_STR_DUMMY_MAX);
+      const float text_x = canvas_center_x - lbl_text_w * 0.5f;
+      const float text_y = row_cy - lbl_text_h * 0.5f;
+      BLF_color4f(BLF_default(), 0.85f, 0.85f, 0.85f, 0.92f);
+      BLF_draw_default(text_x, text_y, 0.0f, lbl_text, BLF_DRAW_STR_DUMMY_MAX);
+    }
+
+    GPU_blend(GPU_BLEND_NONE);
+    better_timeline_clip_end(lbl_clip_state);
+  }
 
   GPU_matrix_pop_projection();
 }

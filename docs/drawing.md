@@ -1,0 +1,185 @@
+# Drawing System — Passes, APIs & Constraints
+
+> Reference for anyone adding new visual elements to the track list or timeline canvas.
+> Unity's Timeline is the visual reference; match its look and feel where possible.
+
+---
+
+## Two Regions, Two Coordinate Spaces
+
+The main window region has two logical areas drawn in the same region:
+
+| Area              | X range                             | Coordinate space used               |
+|-------------------|-------------------------------------|-------------------------------------|
+| **Track List Pane** | `0` → `left_panel_width`          | pixel-space (`wmOrtho2_region_pixelspace`) |
+| **Timeline Canvas** | `left_panel_width` → `region->winx` | view-space for clips (`better_timeline_view_ortho`) **or** pixel-space for overlays |
+
+`left_panel_width` = `better_timeline_left_panel_width(region, sbetter_timeline)` — respects the user-dragged splitter.
+
+**Rule**: clip drawing uses view-space (frames → pixels via `ui::view2d_view_to_region_x`). All overlays (row backgrounds, icons, labels, buttons) use pixel-space. Never mix them without switching projection.
+
+---
+
+## Scissor Helper
+
+Always use this pair to constrain drawing to a rect:
+
+```cpp
+BetterTimelineClipState state;
+better_timeline_clip_begin(region, rect_rcti, &state);
+// ... draw calls ...
+better_timeline_clip_end(state);
+```
+
+Key rects:
+- `better_timeline_body_rect()` — canvas area (right of panel, below scrub bar). Use for clipping clip drawing and status labels.
+- `content_rect = {0, region->winx, 0, content_top}` — full-width strip covering all track rows.
+
+---
+
+## Pass Order in `better_timeline_draw_layout_overlay()`
+
+Everything runs inside a single `wmOrtho2_region_pixelspace` push/pop. Passes must stay in this order to get correct z-layering:
+
+1. **Row backgrounds** — solid filled rects for selected / unselected / muted / locked states
+2. **Diagonal stripe pass** — locked tracks only; `GPU_PRIM_LINES` at 45°
+3. **Separator lines + vertical divider**
+4. **Scrollbar** (via `ui::draw_widget_scroll`)
+5. **Accent bars + button bg** — coloured left stripe, subtle button backgrounds
+6. **Track name text** — `BLF_draw_default`
+7. **Icon pass** — type icon, mute icon, lock icon via `ui::icon_draw_ex`
+8. **Status label boxes** — "Locked"/"Muted" rounded boxes + text, scissored to `body_rect`
+
+If you add a new visual layer, decide where in this order it belongs and insert it there. Don't append to the end blindly — icons must always sit above backgrounds.
+
+---
+
+## GPU Immediate Mode Pattern
+
+```cpp
+GPU_blend(GPU_BLEND_ALPHA);
+GPUVertFormat *format = immVertexFormat();
+uint pos = GPU_vertformat_attr_add(format, "pos", gpu::VertAttrType::SFLOAT_32_32);
+immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+
+immUniformColor4f(r, g, b, a);
+immRectf(pos, x0, y0, x1, y1);         // filled rect
+// or
+immBegin(GPU_PRIM_LINES, count * 2);
+  immVertex2f(pos, x0, y0);
+  immVertex2f(pos, x1, y1);
+immEnd();
+
+immUnbindProgram();
+GPU_blend(GPU_BLEND_NONE);
+```
+
+**Gotcha**: never share a `pos` attribute between two separate `immVertexFormat()` calls — each `immVertexFormat()` creates a new format; get a fresh `pos` from it.
+
+---
+
+## Rounded Box API
+
+Namespace: `blender::ui` (declared in `UI_interface_c.hh`).
+
+```cpp
+ui::draw_roundbox_corner_set(ui::CNR_ALL);  // must call before drawing
+const rctf rect = {xmin, xmax, ymin, ymax};
+
+float fill[4]    = {0.12f, 0.12f, 0.12f, 0.88f};
+float outline[4] = {0.50f, 0.50f, 0.50f, 0.80f};
+
+ui::draw_roundbox_4fv(&rect, true,  radius, fill);    // filled pass
+ui::draw_roundbox_4fv(&rect, false, radius, outline); // outline pass
+```
+
+Corner flags: `ui::CNR_TOP_LEFT`, `ui::CNR_TOP_RIGHT`, `ui::CNR_BOTTOM_RIGHT`, `ui::CNR_BOTTOM_LEFT`, `ui::CNR_ALL` (all four), `ui::CNR_NONE`.
+
+**Gotcha**: the identifiers are `ui::CNR_ALL` (not `UI_CNR_ALL`) and `ui::draw_roundbox_4fv` (not `UI_draw_roundbox_4fv`). The old C-style names don't exist in this codebase.
+
+---
+
+## Icon Drawing API
+
+```cpp
+// blender::ui, declared in UI_interface_c.hh
+ui::icon_draw_ex(
+    x, y,                // bottom-left corner in pixel-space
+    icon_id,             // ICON_* constant
+    1.0f / UI_SCALE_FAC, // aspect — keeps icons pixel-perfect at any DPI
+    alpha,               // 0.0–1.0
+    0.0f,                // desaturate amount (0 = full colour)
+    nullptr,             // mono_color (nullptr = use theme colour)
+    false,               // mono_border
+    nullptr              // IconTextOverlay
+);
+```
+
+Icon IDs used in the track list (`UI_icons.hh`):
+
+| Usage              | Visible  | Active/On        |
+|--------------------|----------|------------------|
+| Mute button        | `ICON_HIDE_OFF` | `ICON_HIDE_ON` |
+| Lock button        | `ICON_UNLOCKED` | `ICON_LOCKED`  |
+| Test track type    | `ICON_SEQ_SEQUENCER` | —         |
+| Animation track    | `ICON_ACTION`   | —              |
+| Spline track       | `ICON_CURVE_DATA` | —            |
+
+---
+
+## BLF Text API
+
+```cpp
+// Measure before drawing to centre or right-align:
+float w = BLF_width(BLF_default(), text, BLF_DRAW_STR_DUMMY_MAX);
+float h = BLF_height(BLF_default(), text, BLF_DRAW_STR_DUMMY_MAX);
+
+// h is height above baseline only — add ~20–25% for full line height if needed.
+
+// Set colour then draw:
+BLF_color4f(BLF_default(), r, g, b, a);
+BLF_draw_default(x, y, 0.0f, text, BLF_DRAW_STR_DUMMY_MAX);
+
+// Vertical centre formula:
+float text_y = box_center_y - h * 0.5f;
+```
+
+---
+
+## Diagonal Stripe Helper
+
+```cpp
+// static in better_timeline_draw.cc
+better_timeline_draw_diagonal_stripes(x0, y0, x1, y1, pos);
+// Draws 45° lines (bottom-left → top-right), spacing 11 px scaled.
+// Call with immBind active and colour already set.
+// Active scissor handles clipping — lines intentionally extend beyond the rect.
+```
+
+---
+
+## Clip Colour & Muted Override
+
+`better_timeline_clip_color_get(clip, color[4])` returns the base colour. Currently hardcoded per clip type. When the parent track is muted, override after the call:
+
+```cpp
+if (track_muted) {
+  float lum = color[0]*0.2126f + color[1]*0.7152f + color[2]*0.0722f;
+  float grey = lum * 0.5f + 0.22f;
+  color[0] = color[1] = color[2] = grey;
+  color[3] *= 0.55f;
+}
+```
+
+This desaturates to perceptual grey. Use the same formula for any future "inactive" clip state.
+
+---
+
+## Constraints & Known Gotchas
+
+- **Do NOT reset `region->v2d.cur` to `tot` every draw** — breaks wheel/MMB zoom navigation.
+- **Do NOT enable `V2D_KEEPZOOM`** on the Better Timeline View2D.
+- **Do NOT enable `ED_KEYMAP_ANIMATION`** on the window region — crashes in `ED_markers_region_visible()`.
+- Ruler scrubbing uses `ANIM_OT_change_frame`; this operator must explicitly allow `SPACE_BETTER_TIMELINE` (already done in `anim_ops.cc`).
+- During splitter drag, call `better_timeline_view2d_update_old_window()` to refresh `v2d.oldwinx/oldwiny`, otherwise Blender auto-zooms on every redraw.
+- `ED_time_scrub_draw()` must be scissored to the canvas rect, not the full region — otherwise the ruler bleeds under the left panel.
