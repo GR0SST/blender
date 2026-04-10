@@ -22,6 +22,39 @@ Important item payload fields:
 
 These `IDProperty` roots are the extension points for type-specific data.
 
+- `BetterTimelineTrack::object` — a live `Object *` ID pointer; only present on tracks whose type
+  sets `has_object_slot = true`. Persisted as a direct pointer in the DNA struct.
+
+## ID Pointer Fields
+
+When a Better Timeline struct stores a live Blender ID pointer (e.g. `Object *`), normal
+`blend_read_data` is not sufficient. ID pointers require the **liblink fixup phase** because the
+referenced IDs are not yet available when `blend_read_data` runs.
+
+The correct pattern:
+
+1. Register a `blend_read_after_liblink` callback on the `SpaceType` in `space_better_timeline.cc`:
+   ```cpp
+   st->blend_read_after_liblink = better_timeline_space_blend_read_after_liblink;
+   ```
+
+2. In `better_timeline_data.cc`, iterate tracks and call `BLO_read_get_new_id_address`:
+   ```cpp
+   void better_timeline_space_blend_read_after_liblink(BlendLibReader *reader,
+                                                       ID *parent_id,
+                                                       SpaceLink *sl)
+   {
+     auto *s = reinterpret_cast<SpaceBetterTimeline *>(sl);
+     LISTBASE_FOREACH (BetterTimelineTrack *, track, &s->tracks) {
+       track->object = reinterpret_cast<Object *>(BLO_read_get_new_id_address(
+           reader, parent_id, false, reinterpret_cast<ID *>(track->object)));
+     }
+   }
+   ```
+
+`BLO_read_get_new_id_address` takes four arguments: `(reader, self_id, is_linked_only, id)`.
+Passing `false` for `is_linked_only` is correct for scene-local objects.
+
 ## Runtime-Only State
 
 `SpaceBetterTimeline::runtime` is a raw pointer to `SpaceBetterTimeline_Runtime`, declared in `DNA_space_types.h` and defined in `better_timeline_intern.hh`.

@@ -621,6 +621,34 @@ void better_timeline_view_sync(ARegion *region,
   better_timeline_view2d_apply_mask(region, v2d, sbetter_timeline);
 }
 
+rcti better_timeline_track_object_slot_rect(const ARegion *region,
+                                             const SpaceBetterTimeline *sbetter_timeline,
+                                             const int row_index)
+{
+  const int accent_w = int(BETTER_TIMELINE_TRACK_ACCENT_WIDTH * UI_SCALE_FAC);
+  const int icon_area = int(BETTER_TIMELINE_TRACK_BUTTON_SIZE * UI_SCALE_FAC);
+  const int gap = int(4.0f * UI_SCALE_FAC);
+  const int btn_size = int(BETTER_TIMELINE_TRACK_BUTTON_SIZE * UI_SCALE_FAC);
+  const int btn_margin = int(4.0f * UI_SCALE_FAC);
+  const int left_panel_width = better_timeline_left_panel_width(region, sbetter_timeline);
+  const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+  const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+  const int pad_y = int(5.0f * UI_SCALE_FAC);
+  /* Start after accent + type icon; end before the mute button. */
+  const int x_min = accent_w + gap + icon_area + gap;
+  const int x_max = left_panel_width - btn_margin - 2 * btn_size - gap;
+  return rcti{x_min, std::max(x_min + 1, x_max), int(y_min) + pad_y, int(y_max) - pad_y};
+}
+
+rcti better_timeline_track_object_slot_picker_rect(const ARegion *region,
+                                                   const SpaceBetterTimeline *sbetter_timeline,
+                                                   const int row_index)
+{
+  const rcti slot = better_timeline_track_object_slot_rect(region, sbetter_timeline, row_index);
+  const int h = slot.ymax - slot.ymin;
+  return rcti{slot.xmax - h, slot.xmax, slot.ymin, slot.ymax};
+}
+
 rcti better_timeline_track_mute_button_rect(const ARegion *region,
                                             const SpaceBetterTimeline *sbetter_timeline,
                                             const int row_index)

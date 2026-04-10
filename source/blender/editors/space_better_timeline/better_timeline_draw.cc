@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "DNA_object_types.h"
 #include "DNA_space_types.h"
 
 #include "BLI_math_base.h"
@@ -1364,10 +1365,44 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
                float(lock_rect.ymin),
                float(lock_rect.xmax),
                float(lock_rect.ymax));
+
     }
     better_timeline_clip_end(content_clip_state);
     immUnbindProgram();
   }
+  GPU_blend(GPU_BLEND_NONE);
+
+  /* --- Object slot bar pass: black rounded-rect background --- */
+  GPU_blend(GPU_BLEND_ALPHA);
+  better_timeline_clip_begin(region, content_rect, &content_clip_state);
+  ui::draw_roundbox_corner_set(ui::CNR_ALL);
+  for (int row_index = 0; row_index < track_count; row_index++) {
+    if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
+      continue;
+    }
+    const BetterTimelineTrack *track = better_timeline_track_at_index(
+        sbetter_timeline, row_index);
+    if (track == nullptr) {
+      continue;
+    }
+    const ed::better_timeline::BetterTimelineTrackType *tt_slot =
+        ed::better_timeline::track_type_find_from_idname(track->track_type);
+    if (tt_slot == nullptr || !tt_slot->has_object_slot) {
+      continue;
+    }
+    const rcti slot_rect = better_timeline_track_object_slot_rect(
+        region, sbetter_timeline, row_index);
+    const rctf slot_rctf = {float(slot_rect.xmin),
+                            float(slot_rect.xmax),
+                            float(slot_rect.ymin),
+                            float(slot_rect.ymax)};
+    const float radius = 3.0f * UI_SCALE_FAC;
+    /* Black, slightly more opaque when an object is assigned. */
+    const float slot_alpha = (track->object != nullptr) ? 0.82f : 0.65f;
+    const float col[4] = {0.0f, 0.0f, 0.0f, slot_alpha};
+    ui::draw_roundbox_aa(&slot_rctf, true, radius, col);
+  }
+  better_timeline_clip_end(content_clip_state);
   GPU_blend(GPU_BLEND_NONE);
 
   /* --- Track name text pass --- */
@@ -1393,9 +1428,43 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     const float accent_w = float(BETTER_TIMELINE_TRACK_ACCENT_WIDTH) * UI_SCALE_FAC;
     const float icon_area = float(BETTER_TIMELINE_TRACK_BUTTON_SIZE) * UI_SCALE_FAC;
     const float name_x = accent_w + (4.0f * UI_SCALE_FAC) + icon_area + (4.0f * UI_SCALE_FAC);
-    const float y = better_timeline_row_ymin(region, sbetter_timeline, row_index) +
-                    (BETTER_TIMELINE_ROW_HEIGHT * 0.5f) - (5.0f * UI_SCALE_FAC);
-    BLF_draw_default(name_x, y, 0.0f, track->name, BLF_DRAW_STR_DUMMY_MAX);
+    const float row_ymin = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+
+    const ed::better_timeline::BetterTimelineTrackType *tt_name =
+        ed::better_timeline::track_type_find_from_idname(track->track_type);
+    const bool has_obj_slot = (tt_name != nullptr && tt_name->has_object_slot);
+
+    if (has_obj_slot) {
+      /* Object-slot tracks: draw the bound object name inside the slot bar.
+       * The track name is omitted — the bar is the primary identity widget. */
+      const rcti slot_rect = better_timeline_track_object_slot_rect(
+          region, sbetter_timeline, row_index);
+      const float icon_size = float(UI_ICON_SIZE);
+      /* Text starts after a small left padding + icon width. */
+      const float text_x = float(slot_rect.xmin) + (3.0f * UI_SCALE_FAC) + icon_size +
+                           (3.0f * UI_SCALE_FAC);
+      const float slot_cy = (float(slot_rect.ymin) + float(slot_rect.ymax)) * 0.5f;
+      const float text_y = slot_cy - (5.0f * UI_SCALE_FAC);
+
+      if (track->object != nullptr) {
+        /* White text on the dark bar. */
+        const uchar white[4] = {255, 255, 255, 230};
+        BLF_color4ubv(BLF_default(), white);
+        const char *obj_name =
+            reinterpret_cast<const Object *>(track->object)->id.name + 2;
+        BLF_draw_default(text_x, text_y, 0.0f, obj_name, BLF_DRAW_STR_DUMMY_MAX);
+      }
+      else {
+        /* "None" — white but dimmed to hint the slot is empty. */
+        const uchar white_dim[4] = {255, 255, 255, 110};
+        BLF_color4ubv(BLF_default(), white_dim);
+        BLF_draw_default(text_x, text_y, 0.0f, "None", BLF_DRAW_STR_DUMMY_MAX);
+      }
+    }
+    else {
+      const float y = row_ymin + (BETTER_TIMELINE_ROW_HEIGHT * 0.5f) - (5.0f * UI_SCALE_FAC);
+      BLF_draw_default(name_x, y, 0.0f, track->name, BLF_DRAW_STR_DUMMY_MAX);
+    }
   }
   better_timeline_clip_end(content_clip_state);
 
@@ -1438,6 +1507,44 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
                      icon_color,
                      false,
                      nullptr);
+
+    /* Object slot icon: small OBJECT_DATA icon at the left edge of the slot bar. */
+    if (tt != nullptr && tt->has_object_slot) {
+      const rcti slot_rect = better_timeline_track_object_slot_rect(
+          region, sbetter_timeline, row_index);
+      const float slot_cy = (float(slot_rect.ymin) + float(slot_rect.ymax)) * 0.5f;
+      const float obj_icon_x = float(slot_rect.xmin) + (3.0f * UI_SCALE_FAC);
+      const float obj_icon_y = slot_cy - icon_size * 0.5f;
+      /* White icon on the dark bar; dim when no object is assigned. */
+      const float obj_icon_alpha = (track->object != nullptr) ? 0.90f : 0.45f;
+      const uchar obj_icon_color[4] = {255, 255, 255, uchar(255 * obj_icon_alpha)};
+      ui::icon_draw_ex(obj_icon_x,
+                       obj_icon_y,
+                       ICON_OBJECT_DATA,
+                       1.0f / UI_SCALE_FAC,
+                       obj_icon_alpha,
+                       0.0f,
+                       obj_icon_color,
+                       false,
+                       nullptr);
+
+      /* Picker button: small downward-triangle at the right edge of the slot bar. */
+      const rcti picker_rect = better_timeline_track_object_slot_picker_rect(
+          region, sbetter_timeline, row_index);
+      const float picker_cx = (float(picker_rect.xmin) + float(picker_rect.xmax)) * 0.5f;
+      const float picker_icon_x = picker_cx - icon_size * 0.5f;
+      const float picker_icon_y = slot_cy - icon_size * 0.5f;
+      const uchar picker_color[4] = {255, 255, 255, 180};
+      ui::icon_draw_ex(picker_icon_x,
+                       picker_icon_y,
+                       ICON_TRIA_DOWN,
+                       1.0f / UI_SCALE_FAC,
+                       180.0f / 255.0f,
+                       0.0f,
+                       picker_color,
+                       false,
+                       nullptr);
+    }
 
     /* Mute (eye) button icon. */
     const int mute_icon = better_timeline_track_is_muted(track) ? ICON_HIDE_ON : ICON_HIDE_OFF;

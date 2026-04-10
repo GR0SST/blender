@@ -69,7 +69,8 @@ static void ensure_builtin_types_registered()
                            const char *description,
                            std::initializer_list<const char *> compatible_clip_type_ids,
                            const float color[3],
-                           const int icon) {
+                           const int icon,
+                           const bool has_object_slot = false) {
     auto track_type = std::make_unique<BetterTimelineTrackType>();
     STRNCPY_UTF8(track_type->idname, idname);
     STRNCPY_UTF8(track_type->label, label);
@@ -81,6 +82,7 @@ static void ensure_builtin_types_registered()
     track_type->color[1] = color[1];
     track_type->color[2] = color[2];
     track_type->icon = icon;
+    track_type->has_object_slot = has_object_slot;
     track_type_register(std::move(track_type));
   };
 
@@ -113,7 +115,8 @@ static void ensure_builtin_types_registered()
                    "Track type that accepts animation clips",
                    {BETTER_TIMELINE_CLIP_TYPE_ANIMATION},
                    anim_color,
-                   ICON_ACTION);
+                   ICON_ACTION,
+                   true);
   }
   {
     static const float spline_color[3] = {0.72f, 0.52f, 0.22f};

@@ -31,6 +31,7 @@ set(LIB
   PRIVATE bf::blenfont
   PRIVATE bf::blenlib
   PRIVATE bf::blenloader
+  PRIVATE bf::depsgraph
   PRIVATE bf::dna
   PRIVATE bf::gpu
   PRIVATE bf::intern::guardedalloc

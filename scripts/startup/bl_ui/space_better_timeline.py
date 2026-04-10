@@ -266,6 +266,10 @@ class BETTER_TIMELINE_PT_active_track(BetterTimelineSidebarPanel, Panel):
         row.enabled = False
         row.prop(track, "type_label", text="Type")
 
+        if track.has_object_slot:
+            layout.separator()
+            layout.prop(track, "object")
+
 
 classes = (
     BETTER_TIMELINE_HT_header,

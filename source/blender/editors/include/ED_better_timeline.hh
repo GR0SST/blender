@@ -51,6 +51,9 @@ struct BetterTimelineTrackType {
   float color[3] = {0.5f, 0.5f, 0.5f};
   /** BIFIconID for the track type icon shown in the track list pane. */
   int icon = 0;
+  /** If true, this track type supports binding a scene Object to the track.
+   *  The bound object is stored in `BetterTimelineTrack::object`. */
+  bool has_object_slot = false;
 };
 
 void register_builtin_types();

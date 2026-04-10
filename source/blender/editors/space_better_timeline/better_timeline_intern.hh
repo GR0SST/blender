@@ -23,7 +23,9 @@ struct ARegion;
 struct BetterTimelineClip;
 struct BetterTimelineTrack;
 struct BlendDataReader;
+struct BlendLibReader;
 struct BlendWriter;
+struct ID;
 struct Scene;
 struct ScrArea;
 struct SpaceLink;
@@ -322,6 +324,7 @@ void better_timeline_track_ops_register();
 void better_timeline_clip_ops_register();
 void better_timeline_clipboard_track_ops_register();
 void better_timeline_clipboard_clip_ops_register();
+void better_timeline_drop_register();
 wmOperatorStatus better_timeline_track_select_click_invoke(bContext *C, const wmEvent *event);
 void better_timeline_main_region_draw(const bContext *C, ARegion *region);
 void better_timeline_main_region_draw_overlay(const bContext *C, ARegion *region);
@@ -400,10 +403,19 @@ BetterTimelineClip *better_timeline_clip_from_region_position(
     int region_y,
     BetterTimelineTrack **r_track);
 void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl);
+void better_timeline_space_blend_read_after_liblink(BlendLibReader *reader,
+                                                    ID *parent_id,
+                                                    SpaceLink *sl);
 void better_timeline_space_blend_write(BlendWriter *writer, SpaceLink *sl);
 
 bool better_timeline_track_is_muted(const BetterTimelineTrack *track);
 bool better_timeline_track_is_locked(const BetterTimelineTrack *track);
+rcti better_timeline_track_object_slot_rect(const ARegion *region,
+                                             const SpaceBetterTimeline *sbetter_timeline,
+                                             int row_index);
+rcti better_timeline_track_object_slot_picker_rect(const ARegion *region,
+                                                   const SpaceBetterTimeline *sbetter_timeline,
+                                                   int row_index);
 rcti better_timeline_track_mute_button_rect(const ARegion *region,
                                             const SpaceBetterTimeline *sbetter_timeline,
                                             int row_index);

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "DNA_object_types.h"
 #include "DNA_space_types.h"
 #include "DNA_windowmanager_types.h"
 
@@ -15,16 +16,23 @@
 
 #include "BLI_listbase.h"
 
+#include "DEG_depsgraph.hh"
+
 #include "BKE_context.hh"
+#include "BKE_layer.hh"
+#include "BKE_lib_id.hh"
 #include "BKE_main.hh"
 #include "BKE_report.hh"
+#include "BKE_scene.hh"
 
 #include "ED_better_timeline.hh"
+#include "ED_object.hh"
 #include "ED_screen.hh"
 #include "ED_undo.hh"
 
 #include "RNA_access.hh"
 #include "RNA_define.hh"
+#include "RNA_enum_types.hh"
 
 #include "UI_interface.hh"
 #include "UI_interface_c.hh"
@@ -181,6 +189,60 @@ wmOperatorStatus better_timeline_track_select_click_invoke(bContext *C, const wm
   }
   if (better_timeline_is_on_panel_divider(region, sbetter_timeline, event->mval[0])) {
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
+  }
+
+  /* Object slot click area. */
+  if (better_timeline_is_in_track_list_pane(region, sbetter_timeline, event->mval[0])) {
+    const int obj_row = better_timeline_track_from_region_y(
+        region, sbetter_timeline, event->mval[1]);
+    if (obj_row >= 0) {
+      BetterTimelineTrack *obj_track = better_timeline_track_at_index(sbetter_timeline, obj_row);
+      if (obj_track != nullptr) {
+        const ed::better_timeline::BetterTimelineTrackType *tt =
+            ed::better_timeline::track_type_find_from_idname(obj_track->track_type);
+        if (tt != nullptr && tt->has_object_slot) {
+          const rcti slot_rect = better_timeline_track_object_slot_rect(
+              region, sbetter_timeline, obj_row);
+          if (BLI_rcti_isect_pt(&slot_rect, event->mval[0], event->mval[1])) {
+            /* Picker button: open searchable object list. */
+            const rcti picker_rect = better_timeline_track_object_slot_picker_rect(
+                region, sbetter_timeline, obj_row);
+            if (BLI_rcti_isect_pt(&picker_rect, event->mval[0], event->mval[1])) {
+              wmOperatorType *ot = WM_operatortype_find(
+                  "BETTER_TIMELINE_OT_track_pick_object", true);
+              if (ot != nullptr) {
+                PointerRNA op_props = WM_operator_properties_create_ptr(ot);
+                RNA_int_set(&op_props, "track_index", obj_row);
+                WM_operator_name_call_ptr(
+                    C, ot, wm::OpCallContext::InvokeDefault, &op_props, event);
+                WM_operator_properties_free(&op_props);
+              }
+              return OPERATOR_FINISHED;
+            }
+
+            /* Rest of bar: select + highlight the bound object. */
+            if (obj_track->object != nullptr) {
+              Scene *scene = CTX_data_scene(C);
+              ViewLayer *view_layer = CTX_data_view_layer(C);
+              BKE_view_layer_synced_ensure(scene, view_layer);
+              Base *base = BKE_view_layer_base_find(view_layer, obj_track->object);
+              if (base != nullptr) {
+                for (Base &b : view_layer->object_bases) {
+                  ed::object::base_select(&b, ed::object::BA_DESELECT);
+                }
+                ed::object::base_select(base, ed::object::BA_SELECT);
+                ed::object::base_activate(C, base);
+                DEG_id_tag_update(&scene->id, ID_RECALC_SELECT);
+                WM_event_add_notifier(C, NC_SCENE | ND_OB_ACTIVE, scene);
+                WM_event_add_notifier(C, NC_SCENE | ND_OB_SELECT, scene);
+                ED_area_tag_redraw(area);
+              }
+              return OPERATOR_FINISHED;
+            }
+          }
+        }
+      }
+    }
   }
 
   /* Mute button click: toggle track muted flag. */
@@ -1096,6 +1158,9 @@ static void BETTER_TIMELINE_OT_clear_selection(wmOperatorType *ot)
   ot->flag = OPTYPE_INTERNAL;
 }
 
+static void BETTER_TIMELINE_OT_track_drop_object(wmOperatorType *ot);
+static void BETTER_TIMELINE_OT_track_pick_object(wmOperatorType *ot);
+
 void better_timeline_track_ops_register()
 {
   WM_operatortype_append(BETTER_TIMELINE_OT_add_track);
@@ -1106,6 +1171,9 @@ void better_timeline_track_ops_register()
   WM_operatortype_append(BETTER_TIMELINE_OT_clear_selection);
   WM_operatortype_append(BETTER_TIMELINE_OT_track_select);
   WM_operatortype_append(BETTER_TIMELINE_OT_track_reorder);
+  /* Drop operator must be registered at startup alongside other operators. */
+  WM_operatortype_append(BETTER_TIMELINE_OT_track_drop_object);
+  WM_operatortype_append(BETTER_TIMELINE_OT_track_pick_object);
 }
 
 void better_timeline_clipboard_track_ops_register()
@@ -1113,6 +1181,240 @@ void better_timeline_clipboard_track_ops_register()
   WM_operatortype_append(BETTER_TIMELINE_OT_duplicate_track);
   WM_operatortype_append(BETTER_TIMELINE_OT_copy_track);
   WM_operatortype_append(BETTER_TIMELINE_OT_paste_track);
+}
+
+/* -------------------------------------------------------------------- */
+/** \name Drop Object onto Track
+ * \{ */
+
+static bool better_timeline_track_drop_object_poll(bContext *C,
+                                                   wmDrag *drag,
+                                                   const wmEvent *event)
+{
+  if (!WM_drag_is_ID_type(drag, ID_OB)) {
+    return false;
+  }
+  const ARegion *region = CTX_wm_region(C);
+  const ScrArea *area = CTX_wm_area(C);
+  if (region == nullptr || area == nullptr || area->spacetype != SPACE_BETTER_TIMELINE ||
+      region->regiontype != RGN_TYPE_WINDOW)
+  {
+    return false;
+  }
+  const auto *sbetter_timeline = static_cast<const SpaceBetterTimeline *>(
+      area->spacedata.first);
+  if (!better_timeline_is_in_track_list_pane(region, sbetter_timeline, event->mval[0])) {
+    return false;
+  }
+  const int track_idx = better_timeline_track_from_region_y(
+      region, sbetter_timeline, event->mval[1]);
+  if (track_idx < 0) {
+    return false;
+  }
+  const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, track_idx);
+  if (track == nullptr) {
+    return false;
+  }
+  const ed::better_timeline::BetterTimelineTrackType *tt =
+      ed::better_timeline::track_type_find_from_idname(track->track_type);
+  return (tt != nullptr && tt->has_object_slot);
+}
+
+static void better_timeline_track_drop_object_copy(bContext * /*C*/,
+                                                   wmDrag *drag,
+                                                   wmDropBox *drop)
+{
+  ID *id = WM_drag_get_local_ID(drag, ID_OB);
+  if (id != nullptr) {
+    RNA_int_set(drop->ptr, "session_uid", int(id->session_uid));
+  }
+}
+
+static wmOperatorStatus better_timeline_track_drop_object_invoke(bContext *C,
+                                                                  wmOperator *op,
+                                                                  const wmEvent *event)
+{
+  const ARegion *region = CTX_wm_region(C);
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(
+      CTX_wm_area(C)->spacedata.first);
+
+  const int track_idx = better_timeline_track_from_region_y(
+      region, sbetter_timeline, event->mval[1]);
+  BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, track_idx);
+  if (track == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+  const ed::better_timeline::BetterTimelineTrackType *tt =
+      ed::better_timeline::track_type_find_from_idname(track->track_type);
+  if (tt == nullptr || !tt->has_object_slot) {
+    return OPERATOR_CANCELLED;
+  }
+
+  Main *bmain = CTX_data_main(C);
+  const uint32_t session_uid = uint32_t(RNA_int_get(op->ptr, "session_uid"));
+  Object *ob = reinterpret_cast<Object *>(
+      BKE_libblock_find_session_uid(bmain, ID_OB, session_uid));
+  if (ob == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  better_timeline_undo_push_init(C, "Assign Track Object");
+  track->object = ob;
+  better_timeline_tag_space_state_changed(C);
+
+  return OPERATOR_FINISHED;
+}
+
+/* -------------------------------------------------------------------- */
+/** \name Track Pick Object Operator
+ * \{ */
+
+static int object_type_to_icon(const short ob_type)
+{
+  switch (ob_type) {
+    case OB_MESH:
+      return ICON_OUTLINER_OB_MESH;
+    case OB_CAMERA:
+      return ICON_OUTLINER_OB_CAMERA;
+    case OB_LAMP:
+      return ICON_OUTLINER_OB_LIGHT;
+    case OB_ARMATURE:
+      return ICON_OUTLINER_OB_ARMATURE;
+    case OB_CURVES:
+      return ICON_OUTLINER_OB_CURVES;
+    case OB_EMPTY:
+      return ICON_OUTLINER_OB_EMPTY;
+    case OB_LATTICE:
+      return ICON_OUTLINER_OB_LATTICE;
+    case OB_SPEAKER:
+      return ICON_OUTLINER_OB_SPEAKER;
+    default:
+      return ICON_OBJECT_DATA;
+  }
+}
+
+static const EnumPropertyItem *better_timeline_pick_object_enum_items_fn(
+    bContext *C, PointerRNA * /*ptr*/, PropertyRNA * /*prop*/, bool *r_free)
+{
+  if (C == nullptr) {
+    *r_free = false;
+    return rna_enum_dummy_NULL_items;
+  }
+
+  Main *bmain = CTX_data_main(C);
+  EnumPropertyItem *items = nullptr;
+  int totitem = 0;
+
+  /* "None" — clears the binding. */
+  {
+    EnumPropertyItem item = {};
+    item.value = 0;
+    item.identifier = "NONE";
+    item.name = "None";
+    item.icon = ICON_X;
+    RNA_enum_item_add(&items, &totitem, &item);
+  }
+
+  for (Object *ob = static_cast<Object *>(bmain->objects.first); ob != nullptr;
+       ob = static_cast<Object *>(ob->id.next))
+  {
+    EnumPropertyItem item = {};
+    item.value = int(ob->id.session_uid);
+    item.identifier = ob->id.name; /* type-prefixed — unique across all IDs */
+    item.name = ob->id.name + 2;
+    item.icon = object_type_to_icon(ob->type);
+    RNA_enum_item_add(&items, &totitem, &item);
+  }
+
+  RNA_enum_item_end(&items, &totitem);
+  *r_free = true;
+  return items;
+}
+
+static wmOperatorStatus better_timeline_track_pick_object_exec(bContext *C, wmOperator *op)
+{
+  ScrArea *area = CTX_wm_area(C);
+  if (area == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+  auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
+  const int track_index = RNA_int_get(op->ptr, "track_index");
+  BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, track_index);
+  if (track == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  Main *bmain = CTX_data_main(C);
+  const int uid = RNA_enum_get(op->ptr, "object");
+  Object *ob = nullptr;
+  if (uid != 0) {
+    ob = reinterpret_cast<Object *>(
+        BKE_libblock_find_session_uid(bmain, ID_OB, uint32_t(uid)));
+  }
+
+  better_timeline_undo_push_init(C, "Pick Track Object");
+  track->object = ob;
+  better_timeline_tag_space_state_changed(C);
+  ED_area_tag_redraw(area);
+  return OPERATOR_FINISHED;
+}
+
+static void BETTER_TIMELINE_OT_track_pick_object(wmOperatorType *ot)
+{
+  ot->name = "Pick Track Object";
+  ot->idname = "BETTER_TIMELINE_OT_track_pick_object";
+  ot->description = "Select the scene object to bind to this track";
+
+  ot->exec = better_timeline_track_pick_object_exec;
+  ot->invoke = WM_enum_search_invoke;
+  ot->poll = better_timeline_operator_region_poll;
+
+  PropertyRNA *prop = RNA_def_enum(
+      ot->srna, "object", rna_enum_dummy_NULL_items, 0, "Object", "Scene object to bind");
+  RNA_def_enum_funcs(prop, better_timeline_pick_object_enum_items_fn);
+  RNA_def_property_flag(prop, PROP_ENUM_NO_TRANSLATE);
+  ot->prop = prop;
+
+  RNA_def_int(ot->srna, "track_index", -1, -1, INT_MAX, "Track Index", "", -1, INT_MAX);
+}
+
+/** \} */
+
+static void BETTER_TIMELINE_OT_track_drop_object(wmOperatorType *ot)
+{
+  ot->name = "Drop Object onto Track";
+  ot->idname = "BETTER_TIMELINE_OT_track_drop_object";
+  ot->description = "Assign a scene object to the track by dropping it from the Outliner";
+
+  ot->invoke = better_timeline_track_drop_object_invoke;
+  ot->poll = better_timeline_operator_region_poll;
+  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
+
+  RNA_def_int(ot->srna,
+              "session_uid",
+              0,
+              0,
+              INT_MAX,
+              "Session UID",
+              "Session UID of the object to assign",
+              0,
+              INT_MAX);
+}
+
+/** \} */
+
+void better_timeline_drop_register()
+{
+  /* Called by WM as st->dropboxes — registers the drop handler into the map. */
+  ListBaseT<wmDropBox> *lb = WM_dropboxmap_find(
+      BETTER_TIMELINE_KEYMAP_NAME, SPACE_BETTER_TIMELINE, RGN_TYPE_WINDOW);
+  wmDropBox *drop = WM_dropbox_add(lb,
+                                   "BETTER_TIMELINE_OT_track_drop_object",
+                                   better_timeline_track_drop_object_poll,
+                                   better_timeline_track_drop_object_copy,
+                                   nullptr,
+                                   nullptr);
+  drop->draw_droptip = WM_drag_draw_item_name_fn;
 }
 
 }  // namespace blender

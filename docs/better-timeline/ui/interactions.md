@@ -74,6 +74,72 @@ Locked tracks are intentionally excluded from clip selection and clip resize hit
 
 ---
 
+## Object Slot Click Behavior
+
+The object slot bar on each track (animation tracks, etc.) has two separate click zones handled
+inside `better_timeline_track_select_click_invoke`:
+
+1. **Picker sub-rect** (right edge of bar, square = bar height): opens a searchable enum popup
+   listing all scene objects. Click is detected first; if it hits the picker rect the operator
+   `BETTER_TIMELINE_OT_track_pick_object` is invoked via `WM_operator_name_call_ptr`.
+
+2. **Rest of bar**: selects the bound object in the viewport (deselect-all + select + activate +
+   `DEG_id_tag_update`) and syncs the Outliner. Only fires when `track->object != nullptr`.
+
+Priority: picker check runs before the object-select check so a click on the picker corner never
+triggers a viewport selection.
+
+## Searchable Enum Popup Pattern
+
+`WM_enum_search_invoke` opens a floating search popup for an operator's enum property. To use it:
+
+```cpp
+// In the operator type registration:
+PropertyRNA *prop = RNA_def_enum(
+    ot->srna, "my_prop", rna_enum_dummy_NULL_items, 0, "Label", "Tip");
+RNA_def_enum_funcs(prop, my_dynamic_enum_items_fn);
+RNA_def_property_flag(prop, PROP_ENUM_NO_TRANSLATE);
+ot->prop = prop;          // required — WM_enum_search_invoke reads ot->prop
+ot->invoke = WM_enum_search_invoke;
+```
+
+The dynamic callback signature:
+```cpp
+static const EnumPropertyItem *my_dynamic_enum_items_fn(
+    bContext *C, PointerRNA * /*ptr*/, PropertyRNA * /*prop*/, bool *r_free);
+```
+
+When `*r_free = true`, the returned array is freed by RNA after use. String fields
+(`identifier`, `name`) may safely point into live data (e.g. `ob->id.name`) because the array
+is consumed immediately before any data mutation.
+
+To invoke with pre-set properties from a click handler:
+```cpp
+wmOperatorType *ot = WM_operatortype_find("MY_OT_operator", true);
+PointerRNA op_props = WM_operator_properties_create_ptr(ot); // returns PointerRNA, not ptr arg
+RNA_int_set(&op_props, "track_index", row);
+WM_operator_name_call_ptr(C, ot, wm::OpCallContext::InvokeDefault, &op_props, event);
+WM_operator_properties_free(&op_props);
+```
+
+The `rna_enum_dummy_NULL_items` sentinel lives in `RNA_enum_types.hh` (not `RNA_enum_items.hh`).
+
+## C++ Namespace Gotchas
+
+**`LISTBASE_FOREACH` with `Object *` inside `namespace blender`**: the macro expands to a C-style
+cast that the compiler rejects in this context. Use a manual loop instead:
+
+```cpp
+for (Object *ob = static_cast<Object *>(bmain->objects.first); ob != nullptr;
+     ob = static_cast<Object *>(ob->id.next))
+{
+  // ...
+}
+```
+
+**`eObjectSelect_Mode` enum**: values are scoped as `ed::object::BA_SELECT` /
+`ed::object::BA_DESELECT`, not bare `BA_SELECT` / `BA_DESELECT`.
+
 ## Adding New Keybindings
 
 When adding a Better Timeline keybinding:

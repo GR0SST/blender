@@ -91,6 +91,10 @@ static void better_timeline_main_region_init(wmWindowManager *wm, ARegion *regio
 {
   ui::view2d_region_reinit(&region->v2d, ui::V2D_COMMONVIEW_CUSTOM, region->winx, region->winy);
   better_timeline_main_region_keymap_init(wm, region);
+
+  ListBaseT<wmDropBox> *lb = WM_dropboxmap_find(
+      BETTER_TIMELINE_KEYMAP_NAME, SPACE_BETTER_TIMELINE, RGN_TYPE_WINDOW);
+  WM_event_add_dropbox_handler(&region->runtime->handlers, lb);
 }
 
 static void better_timeline_main_region_cursor(wmWindow *win, ScrArea *area, ARegion *region)
@@ -190,7 +194,9 @@ void ED_spacetype_better_timeline()
   st->free = better_timeline_free;
   st->init = better_timeline_init;
   st->duplicate = better_timeline_duplicate;
+  st->dropboxes = better_timeline_drop_register;
   st->blend_read_data = better_timeline_space_blend_read_data;
+  st->blend_read_after_liblink = better_timeline_space_blend_read_after_liblink;
   st->blend_write = better_timeline_space_blend_write;
 
   art = MEM_new_zeroed<ARegionType>("spacetype better timeline region");

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <utility>
 
+#include "DNA_object_types.h"
 #include "DNA_space_types.h"
 #include "DNA_windowmanager_types.h"
 
@@ -1038,6 +1039,22 @@ void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *s
   }
 
   better_timeline_state_normalize_after_read(sbetter_timeline);
+}
+
+void better_timeline_space_blend_read_after_liblink(BlendLibReader *reader,
+                                                    ID *parent_id,
+                                                    SpaceLink *sl)
+{
+  auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
+           sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    track->object = reinterpret_cast<Object *>(
+        BLO_read_get_new_id_address(
+            reader, parent_id, false, reinterpret_cast<ID *>(track->object)));
+  }
 }
 
 void better_timeline_space_blend_write(BlendWriter *writer, SpaceLink *sl)

@@ -92,6 +92,50 @@ Better Timeline must be wired into the editors build through:
 
 If you add a new Better Timeline translation unit and forget the CMake file, the code simply will not build into Blender.
 
+Module names for `PRIVATE bf::*` in the `LIB` set:
+
+| Header included                  | LIB entry needed     |
+|----------------------------------|----------------------|
+| `DEG_depsgraph.hh`               | `bf::depsgraph`      |
+| `BKE_layer.hh`, `BKE_scene.hh`  | already via `bf::blenkernel` |
+| `ED_object.hh`                   | already via `bf::editors::object` or link-time |
+
+After adding a new `PRIVATE bf::*` entry, re-run CMake before building (`cmake <src>` from the build dir) — Ninja will not pick up CMakeLists changes automatically.
+
+## Drag-Drop System
+
+Making drag-drop work requires **two separate wiring steps**, both mandatory. Missing either one silently breaks the feature with no error.
+
+1. **Register the drop map** — set `st->dropboxes` on the `SpaceType` in `space_better_timeline.cc`:
+   ```cpp
+   st->dropboxes = better_timeline_drop_register;
+   ```
+   `better_timeline_drop_register()` calls `WM_dropboxmap_find()` and `WM_dropbox_add()`. It must be
+   called during editor startup (called as the `st->dropboxes` callback by the window manager).
+
+2. **Attach the map to the region** — call `WM_event_add_dropbox_handler` in the region init:
+   ```cpp
+   // in better_timeline_main_region_init():
+   ListBaseT<wmDropBox> *lb = WM_dropboxmap_find(
+       BETTER_TIMELINE_KEYMAP_NAME, SPACE_BETTER_TIMELINE, RGN_TYPE_WINDOW);
+   WM_event_add_dropbox_handler(&region->runtime->handlers, lb);
+   ```
+
+Without step 1: the drop map is never populated → the cursor always shows "no drop".
+Without step 2: the drop map exists but is never consulted for events → drops are silently ignored.
+
+## Viewport Object Selection
+
+Calling `ed::object::base_activate()` and sending `NC_SCENE | ND_OB_SELECT` is not enough to make an object show as selected (orange outline) in the 3D viewport. The depsgraph must also be explicitly told to recalculate selection state:
+
+```cpp
+DEG_id_tag_update(&scene->id, ID_RECALC_SELECT);
+WM_event_add_notifier(C, NC_SCENE | ND_OB_ACTIVE, scene);
+WM_event_add_notifier(C, NC_SCENE | ND_OB_SELECT, scene);
+```
+
+The header for `DEG_id_tag_update` is `DEG_depsgraph.hh`. Requires `PRIVATE bf::depsgraph` in CMakeLists.txt.
+
 ## Notification And Redraw Plumbing
 
 Better Timeline UI updates often depend on standard Blender notifiers rather than bespoke event paths.

@@ -114,6 +114,17 @@ Corner flags: `ui::CNR_TOP_LEFT`, `ui::CNR_TOP_RIGHT`, `ui::CNR_BOTTOM_RIGHT`, `
 
 **Gotcha**: the identifiers are `ui::CNR_ALL` (not `UI_CNR_ALL`) and `ui::draw_roundbox_4fv` (not `UI_draw_roundbox_4fv`). The old C-style names don't exist in this codebase.
 
+For anti-aliased rounded rects (e.g. dark overlay bars on top of other geometry), prefer the AA variant:
+
+```cpp
+ui::draw_roundbox_corner_set(ui::CNR_ALL); // still required
+const rctf rect = {xmin, xmax, ymin, ymax};
+const float col[4] = {0.0f, 0.0f, 0.0f, 0.82f};
+ui::draw_roundbox_aa(&rect, true, radius, col);
+```
+
+`draw_roundbox_aa` must be called **outside** any active `immBindBuiltinProgram` block — it manages its own GPU state. Calling it inside an imm block corrupts the GPU pipeline.
+
 ---
 
 ## Icon Drawing API
@@ -141,6 +152,15 @@ Icon IDs used in the track list (`UI_icons.hh`):
 | Test track type    | `ICON_SEQ_SEQUENCER` | —         |
 | Animation track    | `ICON_ACTION`   | —              |
 | Spline track       | `ICON_CURVE_DATA` | —            |
+| Object slot (bar)  | `ICON_OBJECT_DATA` | —           |
+| Object slot picker | `ICON_TRIA_DOWN` | —             |
+| Object type — Mesh | `ICON_OUTLINER_OB_MESH` | —      |
+| Object type — Camera | `ICON_OUTLINER_OB_CAMERA` | —  |
+| Object type — Light | `ICON_OUTLINER_OB_LIGHT` | —   |
+| Object type — Armature | `ICON_OUTLINER_OB_ARMATURE` | — |
+| Object type — Empty | `ICON_OUTLINER_OB_EMPTY` | —   |
+
+Note: in Blender 5.1 the old `OB_CURVE` constant is `OB_CURVES`, and `ICON_OUTLINER_OB_CURVES_LEGACY` is `ICON_OUTLINER_OB_CURVES`.
 
 ---
 

@@ -1091,6 +1091,9 @@ struct BetterTimelineTrack {
 
   ListBaseT<BetterTimelineClip> clips = {nullptr, nullptr};
   IDProperty *properties = nullptr;
+  /** Bound scene object for tracks that support object binding (animation, activation/spawn).
+   *  Null when no object is assigned. Only meaningful when the track type has `has_object_slot`. */
+  struct Object *object = nullptr;
 };
 
 struct SpaceBetterTimeline {

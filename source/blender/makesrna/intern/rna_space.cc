@@ -1455,6 +1455,17 @@ static PointerRNA rna_SpaceBetterTimeline_active_clip_get(PointerRNA *ptr)
   return RNA_pointer_create_with_parent(*ptr, RNA_BetterTimelineClip, clip);
 }
 
+static bool rna_BetterTimelineTrack_has_object_slot_get(PointerRNA *ptr)
+{
+  const auto *track = static_cast<const BetterTimelineTrack *>(ptr->data);
+  if (track == nullptr) {
+    return false;
+  }
+  const ed::better_timeline::BetterTimelineTrackType *track_type =
+      ed::better_timeline::track_type_find_from_idname(track->track_type);
+  return (track_type != nullptr && track_type->has_object_slot);
+}
+
 static void rna_BetterTimelineTrack_type_label_get(PointerRNA *ptr, char *value)
 {
   const auto *track = static_cast<const BetterTimelineTrack *>(ptr->data);
@@ -9563,6 +9574,19 @@ static void rna_def_space_better_timeline(BlenderRNA *brna)
                                 nullptr);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop, "Type", "Track type label");
+
+  prop = RNA_def_property(srna, "has_object_slot", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_funcs(prop, "rna_BetterTimelineTrack_has_object_slot_get", nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(
+      prop, "Has Object Slot", "Whether this track type supports binding a scene object");
+
+  prop = RNA_def_property(srna, "object", PROP_POINTER, PROP_NONE);
+  RNA_def_property_pointer_sdna(prop, nullptr, "object");
+  RNA_def_property_struct_type(prop, "Object");
+  RNA_def_property_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop, "Object", "Scene object bound to this track");
+  RNA_def_property_update(prop, NC_SCREEN | NA_EDITED, "rna_SpaceBetterTimeline_state_update");
 
   srna = RNA_def_struct(brna, "BetterTimelineClip", nullptr);
   RNA_def_struct_sdna(srna, "BetterTimelineClip");
