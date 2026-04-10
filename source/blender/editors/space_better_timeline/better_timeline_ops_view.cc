@@ -77,7 +77,7 @@ static wmOperatorStatus better_timeline_scroll_tracks_invoke(bContext *C,
   const eBetterTimelineTrackScrollDirection direction =
       (event->type == WHEELUPMOUSE) ? BETTER_TIMELINE_TRACK_SCROLL_UP :
                                       BETTER_TIMELINE_TRACK_SCROLL_DOWN;
-  const int scroll_step = BETTER_TIMELINE_ROW_HEIGHT * int(direction);
+  const int scroll_step = better_timeline_row_height() * int(direction);
   const int new_scroll_offset = std::clamp(
       better_timeline_track_scroll_offset(region, sbetter_timeline) + scroll_step, 0, scroll_max);
 

@@ -169,17 +169,22 @@ int better_timeline_content_height(const ARegion *region)
   return std::max(0, region->winy - int(UI_TIME_SCRUB_MARGIN_Y));
 }
 
+int better_timeline_row_height()
+{
+  return int(BETTER_TIMELINE_ROW_HEIGHT * UI_SCALE_FAC);
+}
+
 static int better_timeline_row_count(const ARegion *region)
 {
   const int content_height = better_timeline_content_height(region);
-  return std::max(BETTER_TIMELINE_MIN_ROWS, content_height / BETTER_TIMELINE_ROW_HEIGHT);
+  return std::max(BETTER_TIMELINE_MIN_ROWS, content_height / better_timeline_row_height());
 }
 
 int better_timeline_track_scroll_max(const ARegion *region,
                                      const SpaceBetterTimeline *sbetter_timeline)
 {
   const int total_track_height = better_timeline_track_count(sbetter_timeline) *
-                                 BETTER_TIMELINE_ROW_HEIGHT;
+                                 better_timeline_row_height();
   return std::max(0, total_track_height - better_timeline_content_height(region));
 }
 
@@ -224,7 +229,7 @@ rcti better_timeline_track_scrollbar_thumb_rect(const ARegion *region,
   const int visible_height = better_timeline_content_height(region);
   const int total_track_height = std::max(visible_height,
                                           better_timeline_track_count(sbetter_timeline) *
-                                              BETTER_TIMELINE_ROW_HEIGHT);
+                                              better_timeline_row_height());
   const int scroll_max = better_timeline_track_scroll_max(region, sbetter_timeline);
   const int thumb_height = std::clamp(
       int(std::round(float(visible_height) * float(scrollbar_height) / float(total_track_height))),
@@ -271,7 +276,7 @@ float better_timeline_row_ymax(const ARegion *region,
 {
   const int content_top = better_timeline_content_height(region);
   const int scroll_offset = better_timeline_track_scroll_offset(region, sbetter_timeline);
-  return float(content_top + scroll_offset - (row_index * BETTER_TIMELINE_ROW_HEIGHT));
+  return float(content_top + scroll_offset - (row_index * better_timeline_row_height()));
 }
 
 float better_timeline_row_ymin(const ARegion *region,
@@ -279,7 +284,7 @@ float better_timeline_row_ymin(const ARegion *region,
                                const int row_index)
 {
   return better_timeline_row_ymax(region, sbetter_timeline, row_index) -
-         BETTER_TIMELINE_ROW_HEIGHT;
+         better_timeline_row_height();
 }
 
 bool better_timeline_row_is_visible(const ARegion *region,
@@ -308,7 +313,7 @@ int better_timeline_track_from_region_y(const ARegion *region,
   }
 
   const int track_index = (content_top + scroll_offset - region_y - 1) /
-                          BETTER_TIMELINE_ROW_HEIGHT;
+                          better_timeline_row_height();
   return (track_index >= 0 && track_index < track_count) ? track_index : -1;
 }
 
@@ -523,7 +528,7 @@ static int better_timeline_track_reorder_autoscroll_step(const ARegion *region,
 
   const int content_top = better_timeline_content_height(region);
   const int edge_size = std::max(12, int(24.0f * UI_SCALE_FAC));
-  const int scroll_step = std::max(1, BETTER_TIMELINE_ROW_HEIGHT / 4);
+  const int scroll_step = std::max(1, better_timeline_row_height() / 4);
 
   if (region_y >= content_top - edge_size) {
     return -scroll_step;

@@ -383,7 +383,9 @@ static void better_timeline_draw_blend_overlap_at_frames(const View2D *v2d,
                                                           const float right_end,
                                                           const float clip_y_min,
                                                           const float clip_y_max,
-                                                          const uint pos)
+                                                          const uint pos,
+                                                          const bool track_muted,
+                                                          const bool track_locked)
 {
   if (left_clip == nullptr || right_clip == nullptr ||
       !ed::better_timeline::clip_types_allow_overlap(left_clip->clip_type, right_clip->clip_type))
@@ -409,6 +411,24 @@ static void better_timeline_draw_blend_overlap_at_frames(const View2D *v2d,
   better_timeline_clip_color_get(right_clip, right_color);
   left_color[3] = 0.92f;
   right_color[3] = 0.92f;
+
+  /* Mirror the same desaturation applied to clip fills for muted/locked tracks. */
+  auto desaturate = [](float color[4], const float alpha_scale) {
+    const float lum = color[0] * 0.2126f + color[1] * 0.7152f + color[2] * 0.0722f;
+    const float grey = lum * 0.5f + 0.22f;
+    color[0] = grey;
+    color[1] = grey;
+    color[2] = grey;
+    color[3] *= alpha_scale;
+  };
+  if (track_muted) {
+    desaturate(left_color, 0.55f);
+    desaturate(right_color, 0.55f);
+  }
+  if (track_locked) {
+    desaturate(left_color, 0.70f);
+    desaturate(right_color, 0.70f);
+  }
 
   /* Left clip (fading out): upper-left triangle of the blend zone. */
   immUniformColor4f(left_color[0], left_color[1], left_color[2], left_color[3]);
@@ -440,7 +460,9 @@ static void better_timeline_draw_blend_overlap(const View2D *v2d,
                                                const BetterTimelineClip *right_clip,
                                                const float clip_y_min,
                                                const float clip_y_max,
-                                               const uint pos)
+                                               const uint pos,
+                                               const bool track_muted,
+                                               const bool track_locked)
 {
   better_timeline_draw_blend_overlap_at_frames(v2d,
                                                left_clip,
@@ -451,7 +473,9 @@ static void better_timeline_draw_blend_overlap(const View2D *v2d,
                                                right_clip->end_frame,
                                                clip_y_min,
                                                clip_y_max,
-                                               pos);
+                                               pos,
+                                               track_muted,
+                                               track_locked);
 }
 
 static void better_timeline_draw_blend_overlap_preview(const View2D *v2d,
@@ -463,7 +487,9 @@ static void better_timeline_draw_blend_overlap_preview(const View2D *v2d,
                                                        const float right_end_frame,
                                                        const float clip_y_min,
                                                        const float clip_y_max,
-                                                       const uint pos)
+                                                       const uint pos,
+                                                       const bool track_muted,
+                                                       const bool track_locked)
 {
   if (left_clip == nullptr || right_clip == nullptr ||
       !ed::better_timeline::clip_types_allow_overlap(left_clip->clip_type, right_clip->clip_type))
@@ -492,7 +518,9 @@ static void better_timeline_draw_blend_overlap_preview(const View2D *v2d,
                                                right_end_frame,
                                                clip_y_min,
                                                clip_y_max,
-                                               pos);
+                                               pos,
+                                               track_muted,
+                                               track_locked);
 }
 
 static void better_timeline_draw_clip_label(const BetterTimelineClip *clip,
@@ -879,7 +907,7 @@ static void better_timeline_draw_clips(const ARegion *region,
         better_timeline_draw_clip_connector(
             v2d, clip, other_clip, clip_y_min, clip_y_max, pos);
         better_timeline_draw_blend_overlap(
-            v2d, clip, other_clip, clip_y_min, clip_y_max, pos);
+            v2d, clip, other_clip, clip_y_min, clip_y_max, pos, track_muted, track_locked);
       }
     }
   }
@@ -971,7 +999,9 @@ static void better_timeline_draw_clips(const ARegion *region,
                                                    other_clip->end_frame,
                                                    clip_y_min,
                                                    clip_y_max,
-                                                   pos);
+                                                   pos,
+                                                   better_timeline_track_is_muted(preview_track),
+                                                   better_timeline_track_is_locked(preview_track));
       }
 
       for (int j = i + 1; j < clip_drag_state->moved_clips.size(); j++) {
@@ -991,7 +1021,9 @@ static void better_timeline_draw_clips(const ARegion *region,
             other_preview_clip->end_frame + frame_delta,
             clip_y_min,
             clip_y_max,
-            pos);
+            pos,
+            better_timeline_track_is_muted(preview_track),
+            better_timeline_track_is_locked(preview_track));
       }
     }
   }
@@ -1076,7 +1108,9 @@ static void better_timeline_draw_clips(const ARegion *region,
                                                    other_clip->end_frame,
                                                    snapped_clip_y_min,
                                                    snapped_clip_y_max,
-                                                   pos);
+                                                   pos,
+                                                   better_timeline_track_is_muted(preview_track),
+                                                   better_timeline_track_is_locked(preview_track));
       }
     }
   }
@@ -1474,7 +1508,7 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       }
     }
     else {
-      const float y = row_ymin + (BETTER_TIMELINE_ROW_HEIGHT * 0.5f) - (5.0f * UI_SCALE_FAC);
+      const float y = row_ymin + (better_timeline_row_height() * 0.5f) - (5.0f * UI_SCALE_FAC);
       BLF_draw_default(name_x, y, 0.0f, track->name, BLF_DRAW_STR_DUMMY_MAX);
     }
   }

@@ -237,6 +237,8 @@ bool better_timeline_scrub_event_in_region(const ScrArea *area,
                                            const ARegion *region,
                                            const wmEvent *event);
 int better_timeline_content_height(const ARegion *region);
+/** Row height in pixels, scaled by UI_SCALE_FAC for HiDPI displays. */
+int better_timeline_row_height();
 int better_timeline_track_scroll_max(const ARegion *region,
                                      const SpaceBetterTimeline *sbetter_timeline);
 int better_timeline_track_scroll_offset(const ARegion *region,
