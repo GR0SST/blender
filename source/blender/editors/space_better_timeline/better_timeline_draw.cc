@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "DNA_layer_types.h"
 #include "DNA_object_types.h"
 #include "DNA_space_types.h"
 
@@ -53,6 +54,15 @@ static SpaceBetterTimeline_Runtime *better_timeline_runtime_get(
     const SpaceBetterTimeline *sbetter_timeline)
 {
   return (sbetter_timeline != nullptr) ? sbetter_timeline->runtime : nullptr;
+}
+
+static bool better_timeline_track_object_is_selected(const BetterTimelineTrack *track)
+{
+  if (track == nullptr || track->object == nullptr) {
+    return false;
+  }
+
+  return (track->object->base_flag & BASE_SELECTED) != 0;
 }
 
 static void better_timeline_clip_begin(const ARegion *region,
@@ -1447,9 +1457,11 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       const float text_y = slot_cy - (5.0f * UI_SCALE_FAC);
 
       if (track->object != nullptr) {
-        /* White text on the dark bar. */
+        /* Slight warm tint when the bound object is selected in the scene. */
         const uchar white[4] = {255, 255, 255, 230};
-        BLF_color4ubv(BLF_default(), white);
+        const uchar selected_warm[4] = {255, 228, 176, 245};
+        BLF_color4ubv(BLF_default(),
+                      better_timeline_track_object_is_selected(track) ? selected_warm : white);
         const char *obj_name =
             reinterpret_cast<const Object *>(track->object)->id.name + 2;
         BLF_draw_default(text_x, text_y, 0.0f, obj_name, BLF_DRAW_STR_DUMMY_MAX);
