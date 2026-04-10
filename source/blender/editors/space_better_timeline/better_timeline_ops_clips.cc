@@ -51,6 +51,14 @@ static void better_timeline_undo_push_init(bContext *C, const char *name)
     return;
   }
 
+  if (ScrArea *area = CTX_wm_area(C)) {
+    if (auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first)) {
+      if (sbetter_timeline->runtime != nullptr) {
+        sbetter_timeline->runtime->undo_push_pending = true;
+      }
+    }
+  }
+
   BKE_undosys_step_push_init(wm->runtime->undo_stack, C, name);
 }
 
@@ -648,6 +656,18 @@ static void better_timeline_clip_drag_finish(
   ED_area_tag_redraw(CTX_wm_area(C));
 }
 
+static bool better_timeline_clip_drag_has_changes(const BetterTimelineClipDragData *drag_data)
+{
+  if (drag_data == nullptr) {
+    return false;
+  }
+
+  const float frame_delta = drag_data->preview_start_frame - drag_data->initial_start_frame;
+  const bool move_track = drag_data->target_track != nullptr &&
+                          drag_data->target_track != drag_data->source_track;
+  return move_track || frame_delta != 0.0f;
+}
+
 static Vector<const BetterTimelineClip *> better_timeline_dragged_clip_ptrs(
     const BetterTimelineClipDragData &drag_data)
 {
@@ -840,17 +860,19 @@ static wmOperatorStatus better_timeline_clip_drag_modal(bContext *C,
       break;
     case LEFTMOUSE:
       if (event->val == KM_RELEASE) {
-        better_timeline_clip_drag_finish(
-            C, op, drag_data->drop_valid && drag_data->target_track != nullptr, true);
-        return OPERATOR_FINISHED;
+        const bool apply_changes = drag_data->drop_valid && drag_data->target_track != nullptr;
+        const bool changed = apply_changes && better_timeline_clip_drag_has_changes(drag_data);
+        better_timeline_clip_drag_finish(C, op, apply_changes, true);
+        return changed ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
       }
       break;
     case EVT_RETKEY:
     case EVT_SPACEKEY:
       if (event->val == KM_PRESS) {
-        better_timeline_clip_drag_finish(
-            C, op, drag_data->drop_valid && drag_data->target_track != nullptr, true);
-        return OPERATOR_FINISHED;
+        const bool apply_changes = drag_data->drop_valid && drag_data->target_track != nullptr;
+        const bool changed = apply_changes && better_timeline_clip_drag_has_changes(drag_data);
+        better_timeline_clip_drag_finish(C, op, apply_changes, true);
+        return changed ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
       }
       break;
     case RIGHTMOUSE:
@@ -934,7 +956,9 @@ static wmOperatorStatus better_timeline_clip_box_select_modal(bContext *C,
           }
         }
         else {
-          better_timeline_track_select_click_invoke(C, event);
+          const wmOperatorStatus click_status = better_timeline_track_select_click_invoke(C, event);
+          better_timeline_clip_box_select_finish(C, op);
+          return (click_status & OPERATOR_FINISHED) ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
         }
 
         better_timeline_clip_box_select_finish(C, op);
@@ -1553,6 +1577,16 @@ static void better_timeline_clip_resize_finish(bContext *C,
   ED_area_tag_redraw(CTX_wm_area(C));
 }
 
+static bool better_timeline_clip_resize_has_changes(const BetterTimelineClipResizeData *resize_data)
+{
+  if (resize_data == nullptr) {
+    return false;
+  }
+
+  return resize_data->preview_start_frame != resize_data->initial_start_frame ||
+         resize_data->preview_end_frame != resize_data->initial_end_frame;
+}
+
 static wmOperatorStatus better_timeline_clip_resize_modal(bContext *C,
                                                           wmOperator *op,
                                                           const wmEvent *event)
@@ -1604,15 +1638,17 @@ static wmOperatorStatus better_timeline_clip_resize_modal(bContext *C,
       break;
     case LEFTMOUSE:
       if (event->val == KM_RELEASE) {
+        const bool changed = better_timeline_clip_resize_has_changes(resize_data);
         better_timeline_clip_resize_finish(C, op, true);
-        return OPERATOR_FINISHED;
+        return changed ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
       }
       break;
     case EVT_RETKEY:
     case EVT_SPACEKEY:
       if (event->val == KM_PRESS) {
+        const bool changed = better_timeline_clip_resize_has_changes(resize_data);
         better_timeline_clip_resize_finish(C, op, true);
-        return OPERATOR_FINISHED;
+        return changed ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
       }
       break;
     case RIGHTMOUSE:

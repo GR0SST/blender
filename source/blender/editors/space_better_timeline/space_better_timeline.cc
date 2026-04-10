@@ -198,6 +198,8 @@ void ED_spacetype_better_timeline()
   st->blend_read_data = better_timeline_space_blend_read_data;
   st->blend_read_after_liblink = better_timeline_space_blend_read_after_liblink;
   st->blend_write = better_timeline_space_blend_write;
+  st->id_remap = better_timeline_space_id_remap;
+  st->foreach_id = better_timeline_space_foreach_id;
 
   art = MEM_new_zeroed<ARegionType>("spacetype better timeline region");
   art->regionid = RGN_TYPE_WINDOW;

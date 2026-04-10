@@ -60,6 +60,7 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 - `SpaceBetterTimeline` owns `tracks` (a DNA `ListBase`). Each `BetterTimelineTrack` owns `clips` (another `ListBase`). This nested ownership is authoritative — do not redesign clip storage as a detached global list.
 - Tracks and clips are **typed**: `track_type` and `clip_type` are persistent string idnames (max 64 chars) resolved against the runtime registry.
 - Type-specific data lives in `BetterTimelineTrack::properties` / `BetterTimelineClip::properties` (`IDProperty` blobs), not hardcoded struct fields.
+- `BetterTimelineTrack::object` is a weak scene-object binding for object-slot tracks. Treat it like editor UI state, not an owning/refcounted object link.
 - Built-in types: `test_track`→`test_clip`, `animation_track`→`animation_clip`, `spline_track`→`spline_clip`.
 
 ### Compatibility & Registry
@@ -70,6 +71,7 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 ### Operators & Undo
 - All data-affecting operators use `OPTYPE_UNDO`. `bScreen` uses `IDTYPE_FLAGS_NO_MEMFILE_UNDO` in Blender 5.1, so track/clip changes will not participate in global memfile undo without a custom `UndoType`.
 - `Properties Pane` inline edits (`Start`, `End`, `Duration`) must go through the same centralized placement/compatibility validation path as other clip moves — not direct DNA writes.
+- Better Timeline custom undo must only participate for explicit Better Timeline state changes. Do not leave `BKE_undosys_step_push_init()` half-open on helper/UI paths that are not real Better Timeline edits.
 
 ### Drawing & View2D
 - Do **not** enable `V2D_KEEPZOOM` on the Better Timeline `View2D`.
@@ -83,6 +85,7 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 - Keep `space_better_timeline.cc` focused on editor registration, region setup, and top-level lifecycle/glue only.
 - New features go into focused sibling `.cc` files (`*_ops.cc`, `*_draw.cc`, `*_utils.cc`), following the existing split. Do not grow the main file.
 - `SpaceBetterTimeline::runtime` owns all transient/interaction state. New temporary draw or interaction state goes there, not in static/global objects.
+- Runtime also owns Better Timeline-specific undo gating (`undo_push_pending`). If undo behavior changes, update the runtime lifecycle and custom undo poll together.
 - Runtime state must be created during space init/duplicate/read and freed from the space lifecycle — do not intentionally leak static storage.
 
 ### UI Terminology

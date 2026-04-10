@@ -26,6 +26,7 @@ Use the docs in this order:
 | change layout, splitter, scrollbar, regions, or View2D behavior | `docs/better-timeline/ui/layout-and-regions.md` |
 | change hotkeys, hit-testing priority, or interaction flow | `docs/better-timeline/ui/interactions.md` |
 | touch RNA, space registration, Python UI, or anim integration | `docs/better-timeline/code-map/blender-touchpoints.md` |
+| debug object-slot binding, object selection sync, or Properties-pane object fields | `docs/better-timeline/code-map/blender-touchpoints.md` |
 | add a feature and want a file-touch checklist | `docs/better-timeline/workflows/common-change-recipes.md` |
 
 ## Structure

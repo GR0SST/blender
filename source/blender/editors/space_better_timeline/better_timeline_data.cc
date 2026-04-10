@@ -23,11 +23,14 @@
 
 #include "BKE_context.hh"
 #include "BKE_idprop.hh"
+#include "BKE_lib_query.hh"
+#include "BKE_lib_remap.hh"
 #include "BKE_undo_system.hh"
 
 #include "BLO_read_write.hh"
 
 #include "ED_better_timeline.hh"
+#include "ED_screen.hh"
 
 #include "WM_api.hh"
 
@@ -259,8 +262,14 @@ static bool better_timeline_undosys_poll(bContext *C)
   }
   const ScrArea *area = CTX_wm_area(C);
   const SpaceLink *space_link = CTX_wm_space_data(C);
-  return area != nullptr && space_link != nullptr && area->spacetype == SPACE_BETTER_TIMELINE &&
-         space_link->spacetype == SPACE_BETTER_TIMELINE;
+  if (area == nullptr || space_link == nullptr || area->spacetype != SPACE_BETTER_TIMELINE ||
+      space_link->spacetype != SPACE_BETTER_TIMELINE)
+  {
+    return false;
+  }
+
+  const auto *sbetter_timeline = reinterpret_cast<const SpaceBetterTimeline *>(space_link);
+  return sbetter_timeline->runtime != nullptr && sbetter_timeline->runtime->undo_push_pending;
 }
 
 static void better_timeline_undosys_step_encode_init(bContext *C, UndoStep *us_p)
@@ -289,6 +298,9 @@ static bool better_timeline_undosys_step_encode(bContext *C, Main * /*bmain*/, U
    * Pair each track-state step with a memfile boundary so mixed scene/object undo preserves the
    * expected user-visible order instead of letting unrelated global steps jump ahead. */
   us->step.use_memfile_step = true;
+  if (sbetter_timeline->runtime != nullptr) {
+    sbetter_timeline->runtime->undo_push_pending = false;
+  }
   return true;
 }
 
@@ -303,6 +315,9 @@ static void better_timeline_undosys_step_decode(
   better_timeline_state_restore(
       us->space, (dir == STEP_UNDO) ? &us->state_before : &us->state_after);
   better_timeline_track_drag_visual_state_clear(us->space);
+  if (us->space->runtime != nullptr) {
+    us->space->runtime->undo_push_pending = false;
+  }
   WM_event_add_notifier(C, NC_SCREEN | NA_EDITED, nullptr);
 }
 
@@ -1054,6 +1069,41 @@ void better_timeline_space_blend_read_after_liblink(BlendLibReader *reader,
     track->object = reinterpret_cast<Object *>(
         BLO_read_get_new_id_address(
             reader, parent_id, false, reinterpret_cast<ID *>(track->object)));
+  }
+}
+
+void better_timeline_space_id_remap(ScrArea *area,
+                                    SpaceLink *sl,
+                                    const bke::id::IDRemapper &mappings)
+{
+  auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
+  bool changed = false;
+
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
+           sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    changed |= mappings.apply(reinterpret_cast<ID **>(&track->object), ID_REMAP_APPLY_DEFAULT) !=
+               ID_REMAP_RESULT_SOURCE_NOT_MAPPABLE;
+  }
+
+  if (changed && area != nullptr) {
+    ED_area_tag_redraw(area);
+  }
+}
+
+void better_timeline_space_foreach_id(SpaceLink *space_link, LibraryForeachIDData *data)
+{
+  auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(space_link);
+
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
+           sbetter_timeline->tracks.first);
+       track != nullptr;
+       track = track->next)
+  {
+    /* Track-bound scene objects are weak UI references and must be nulled on delete/remap. */
+    BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, track->object, IDWALK_CB_DIRECT_WEAK_LINK);
   }
 }
 

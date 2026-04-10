@@ -28,6 +28,15 @@ For Better Timeline that means:
 - normalize/copy/read/write them in `better_timeline_data.cc`
 - expose them in `rna_space.cc` only if UI/Python needs them
 
+For `BetterTimelineTrack.object` specifically:
+
+- DNA stores a raw `Object *`
+- editor/runtime code treats it as a weak object-slot binding
+- RNA must also expose it as weak by clearing `PROP_ID_REFCOUNT`
+
+If the RNA property is left refcounted, assigning from the Properties Pane will not match the
+tracklist object-picker behavior.
+
 Do not skip the RNA setter path for clip range changes. `start_frame`, `end_frame`, and `duration` setters in `rna_space.cc` already route through centralized placement validation via `ed::better_timeline::track_can_place_clip()`.
 
 ## Python UI
@@ -68,6 +77,13 @@ The custom Better Timeline undo type is registered from:
 - `source/blender/editors/undo/undo_system_types.cc`
 
 If undo behavior changes or a new Better Timeline-specific undo requirement appears, check both the implementation in `better_timeline_data.cc` and the global registration point.
+
+Current gotcha:
+
+- Better Timeline custom undo poll is intentionally gated by runtime `undo_push_pending`, not just
+  "am I inside a Better Timeline area?"
+- this prevents later unrelated clicks from snapshotting Better Timeline state after a helper path
+  called `BKE_undosys_step_push_init()`
 
 ## Addon Extensibility
 
@@ -123,6 +139,14 @@ Making drag-drop work requires **two separate wiring steps**, both mandatory. Mi
 
 Without step 1: the drop map is never populated → the cursor always shows "no drop".
 Without step 2: the drop map exists but is never consulted for events → drops are silently ignored.
+
+Track object-slot binding also relies on regular Blender ID walking/remap:
+
+- register `st->foreach_id`
+- register `st->id_remap`
+
+Without those hooks, deleting or remapping a bound object can leave `track->object` dangling even
+if save/load fixup is correct.
 
 ## Viewport Object Selection
 

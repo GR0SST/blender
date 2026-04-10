@@ -19,6 +19,11 @@
 
 namespace blender {
 
+struct LibraryForeachIDData;
+namespace bke::id {
+class IDRemapper;
+}
+
 struct ARegion;
 struct BetterTimelineClip;
 struct BetterTimelineTrack;
@@ -116,6 +121,7 @@ struct SpaceBetterTimeline_Runtime {
   BetterTimelineClipDragVisualState clip_drag_visual_state;
   BetterTimelineClipBoxSelectVisualState clip_box_select_visual_state;
   BetterTimelineClipResizeVisualState clip_resize_visual_state;
+  bool undo_push_pending = false;
 };
 
 enum eBetterTimelineClipInteractionMode {
@@ -407,6 +413,10 @@ void better_timeline_space_blend_read_after_liblink(BlendLibReader *reader,
                                                     ID *parent_id,
                                                     SpaceLink *sl);
 void better_timeline_space_blend_write(BlendWriter *writer, SpaceLink *sl);
+void better_timeline_space_id_remap(ScrArea *area,
+                                    SpaceLink *sl,
+                                    const bke::id::IDRemapper &mappings);
+void better_timeline_space_foreach_id(SpaceLink *space_link, LibraryForeachIDData *data);
 
 bool better_timeline_track_is_muted(const BetterTimelineTrack *track);
 bool better_timeline_track_is_locked(const BetterTimelineTrack *track);

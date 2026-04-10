@@ -9585,6 +9585,7 @@ static void rna_def_space_better_timeline(BlenderRNA *brna)
   RNA_def_property_pointer_sdna(prop, nullptr, "object");
   RNA_def_property_struct_type(prop, "Object");
   RNA_def_property_flag(prop, PROP_EDITABLE);
+  RNA_def_property_clear_flag(prop, PROP_ID_REFCOUNT);
   RNA_def_property_ui_text(prop, "Object", "Scene object bound to this track");
   RNA_def_property_update(prop, NC_SCREEN | NA_EDITED, "rna_SpaceBetterTimeline_state_update");
 

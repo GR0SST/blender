@@ -76,18 +76,23 @@ Locked tracks are intentionally excluded from clip selection and clip resize hit
 
 ## Object Slot Click Behavior
 
-The object slot bar on each track (animation tracks, etc.) has two separate click zones handled
+The object slot bar on each track (animation tracks, etc.) has three separate click zones handled
 inside `better_timeline_track_select_click_invoke`:
 
 1. **Picker sub-rect** (right edge of bar, square = bar height): opens a searchable enum popup
    listing all scene objects. Click is detected first; if it hits the picker rect the operator
    `BETTER_TIMELINE_OT_track_pick_object` is invoked via `WM_operator_name_call_ptr`.
 
-2. **Rest of bar**: selects the bound object in the viewport (deselect-all + select + activate +
-   `DEG_id_tag_update`) and syncs the Outliner. Only fires when `track->object != nullptr`.
+2. **Object icon or visible object-name text**: selects the bound object in the viewport
+   (deselect-all + select + activate + `DEG_id_tag_update`) and syncs the Outliner.
+   Only fires when `track->object != nullptr`.
+
+3. **Remaining slot-bar background**: does not select the bound object. It falls through to normal
+   Better Timeline row-selection behavior.
 
 Priority: picker check runs before the object-select check so a click on the picker corner never
-triggers a viewport selection.
+triggers a viewport selection. Object selection is intentionally narrower than the full bar; do not
+re-expand it to the whole slot rect unless that UX is explicitly desired.
 
 ## Searchable Enum Popup Pattern
 
@@ -152,3 +157,17 @@ When adding a Better Timeline keybinding:
 5. check for conflicts against existing Better Timeline gestures before choosing the key
 
 Prefer documenting new user-visible shortcuts here once the developer confirms the behavior works.
+
+## No-Op Modal Rule
+
+Clip modal operators that start from generic `Left Mouse` bindings must return `OPERATOR_CANCELLED`
+when nothing actually changed.
+
+Current examples:
+
+- no-op `clip_drag` release cancels instead of finishing
+- no-op `clip_resize` release cancels instead of finishing
+- clip box-select release propagates the result of `better_timeline_track_select_click_invoke()`
+  instead of always reporting success
+
+This prevents stray clicks from finalizing an unrelated Better Timeline undo snapshot.

@@ -24,12 +24,20 @@ These `IDProperty` roots are the extension points for type-specific data.
 
 - `BetterTimelineTrack::object` — a live `Object *` ID pointer; only present on tracks whose type
   sets `has_object_slot = true`. Persisted as a direct pointer in the DNA struct.
+  Treat this as a weak editor binding, not an owning object link.
 
 ## ID Pointer Fields
 
 When a Better Timeline struct stores a live Blender ID pointer (e.g. `Object *`), normal
 `blend_read_data` is not sufficient. ID pointers require the **liblink fixup phase** because the
 referenced IDs are not yet available when `blend_read_data` runs.
+
+For Better Timeline object-slot bindings there are three separate requirements:
+
+1. blend read fixup for save/load
+2. space `foreach_id` / `id_remap` wiring so object delete/remap nulls stale pointers
+3. RNA pointer ownership configured as weak, not refcounted, so the Properties Pane matches the
+   tracklist operator path
 
 The correct pattern:
 
@@ -55,6 +63,19 @@ The correct pattern:
 `BLO_read_get_new_id_address` takes four arguments: `(reader, self_id, is_linked_only, id)`.
 Passing `false` for `is_linked_only` is correct for scene-local objects.
 
+The same field also needs space-level ID walking/remap in `space_better_timeline.cc` /
+`better_timeline_data.cc`:
+
+- `st->foreach_id = better_timeline_space_foreach_id;`
+- `st->id_remap = better_timeline_space_id_remap;`
+
+Use `IDWALK_CB_DIRECT_WEAK_LINK` for `track->object`. If this wiring is missing, deleting or
+remapping a bound object can leave a dangling pointer that later crashes draw/UI code.
+
+On the RNA side, `BetterTimelineTrack.object` in `rna_space.cc` must clear `PROP_ID_REFCOUNT`.
+If you leave it refcounted, assigning through the Properties Pane will not match the tracklist
+operator/dropdown path and can destabilize Better Timeline state/undo behavior.
+
 ## Runtime-Only State
 
 `SpaceBetterTimeline::runtime` is a raw pointer to `SpaceBetterTimeline_Runtime`, declared in `DNA_space_types.h` and defined in `better_timeline_intern.hh`.
@@ -65,6 +86,7 @@ Current runtime visual/interaction state includes:
 - `clip_drag_visual_state`
 - `clip_box_select_visual_state`
 - `clip_resize_visual_state`
+- `undo_push_pending`
 
 Rules:
 
@@ -120,13 +142,16 @@ Why it exists:
 Important implementation details:
 
 - `better_timeline_undo_push_init()` is called before state changes
+- custom undo poll is additionally gated by `SpaceBetterTimeline_Runtime::undo_push_pending`
 - undo snapshots deep-copy the full track tree into `BetterTimelineUndoState`
 - `use_memfile_step = true` is set so Better Timeline steps stay ordered correctly relative to global undo steps
 - decode restores the full snapshot and clears drag visuals
+- no-op modal interactions should cancel rather than finish, otherwise they can trigger unrelated Better Timeline undo snapshotting
 
 Rules:
 
 - state-changing Better Timeline operators should keep using `OPTYPE_UNDO`
+- helper/UI paths that are not real Better Timeline edits must not leave custom undo pending
 - if you add new persistent editor state, make sure it is included in the undo snapshot/restore path
 - if you add new transient runtime state, make sure undo restore clears or rebuilds it appropriately
 

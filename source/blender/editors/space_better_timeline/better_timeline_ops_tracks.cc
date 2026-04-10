@@ -8,6 +8,8 @@
 
 #include <algorithm>
 
+#include "BLF_api.hh"
+
 #include "DNA_object_types.h"
 #include "DNA_space_types.h"
 #include "DNA_windowmanager_types.h"
@@ -54,6 +56,14 @@ static void better_timeline_undo_push_init(bContext *C, const char *name)
     return;
   }
 
+  if (ScrArea *area = CTX_wm_area(C)) {
+    if (auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first)) {
+      if (sbetter_timeline->runtime != nullptr) {
+        sbetter_timeline->runtime->undo_push_pending = true;
+      }
+    }
+  }
+
   BKE_undosys_step_push_init(wm->runtime->undo_stack, C, name);
 }
 
@@ -97,6 +107,50 @@ static BetterTimelineTrack *better_timeline_track_with_selected_clip_get(
     }
   }
   return nullptr;
+}
+
+static bool better_timeline_track_object_slot_activate_isect(const ARegion *region,
+                                                             const SpaceBetterTimeline *sbetter_timeline,
+                                                             const int row_index,
+                                                             const BetterTimelineTrack *track,
+                                                             const int region_x,
+                                                             const int region_y)
+{
+  if (track == nullptr || track->object == nullptr) {
+    return false;
+  }
+
+  const rcti slot_rect = better_timeline_track_object_slot_rect(region, sbetter_timeline, row_index);
+  if (!BLI_rcti_isect_pt(&slot_rect, region_x, region_y)) {
+    return false;
+  }
+
+  const rcti picker_rect = better_timeline_track_object_slot_picker_rect(
+      region, sbetter_timeline, row_index);
+  if (BLI_rcti_isect_pt(&picker_rect, region_x, region_y)) {
+    return false;
+  }
+
+  const float icon_size = float(UI_ICON_SIZE);
+  const int icon_xmin = slot_rect.xmin;
+  const int icon_xmax = slot_rect.xmin + int((3.0f * UI_SCALE_FAC) + icon_size + (3.0f * UI_SCALE_FAC));
+  const rcti icon_rect{icon_xmin, icon_xmax, slot_rect.ymin, slot_rect.ymax};
+  if (BLI_rcti_isect_pt(&icon_rect, region_x, region_y)) {
+    return true;
+  }
+
+  const char *obj_name = track->object->id.name + 2;
+  const float text_x = float(slot_rect.xmin) + (3.0f * UI_SCALE_FAC) + icon_size +
+                       (3.0f * UI_SCALE_FAC);
+  const int text_width = std::max(0, int(BLF_width(BLF_default(), obj_name, BLF_DRAW_STR_DUMMY_MAX)));
+  const int text_xmin = int(text_x);
+  const int text_xmax = std::min(text_xmin + text_width, picker_rect.xmin - int(3.0f * UI_SCALE_FAC));
+  if (text_xmax <= text_xmin) {
+    return false;
+  }
+
+  const rcti text_rect{text_xmin, text_xmax, slot_rect.ymin, slot_rect.ymax};
+  return BLI_rcti_isect_pt(&text_rect, region_x, region_y);
 }
 
 static void better_timeline_track_clipboard_clear()
@@ -201,44 +255,42 @@ wmOperatorStatus better_timeline_track_select_click_invoke(bContext *C, const wm
         const ed::better_timeline::BetterTimelineTrackType *tt =
             ed::better_timeline::track_type_find_from_idname(obj_track->track_type);
         if (tt != nullptr && tt->has_object_slot) {
-          const rcti slot_rect = better_timeline_track_object_slot_rect(
+          const rcti picker_rect = better_timeline_track_object_slot_picker_rect(
               region, sbetter_timeline, obj_row);
-          if (BLI_rcti_isect_pt(&slot_rect, event->mval[0], event->mval[1])) {
-            /* Picker button: open searchable object list. */
-            const rcti picker_rect = better_timeline_track_object_slot_picker_rect(
-                region, sbetter_timeline, obj_row);
-            if (BLI_rcti_isect_pt(&picker_rect, event->mval[0], event->mval[1])) {
-              wmOperatorType *ot = WM_operatortype_find(
-                  "BETTER_TIMELINE_OT_track_pick_object", true);
-              if (ot != nullptr) {
-                PointerRNA op_props = WM_operator_properties_create_ptr(ot);
-                RNA_int_set(&op_props, "track_index", obj_row);
-                WM_operator_name_call_ptr(
-                    C, ot, wm::OpCallContext::InvokeDefault, &op_props, event);
-                WM_operator_properties_free(&op_props);
-              }
-              return OPERATOR_FINISHED;
+          if (BLI_rcti_isect_pt(&picker_rect, event->mval[0], event->mval[1])) {
+            wmOperatorType *ot = WM_operatortype_find(
+                "BETTER_TIMELINE_OT_track_pick_object", true);
+            if (ot != nullptr) {
+              PointerRNA op_props = WM_operator_properties_create_ptr(ot);
+              RNA_int_set(&op_props, "track_index", obj_row);
+              WM_operator_name_call_ptr(
+                  C, ot, wm::OpCallContext::InvokeDefault, &op_props, event);
+              WM_operator_properties_free(&op_props);
             }
+            return OPERATOR_FINISHED;
+          }
 
-            /* Rest of bar: select + highlight the bound object. */
-            if (obj_track->object != nullptr) {
-              Scene *scene = CTX_data_scene(C);
-              ViewLayer *view_layer = CTX_data_view_layer(C);
-              BKE_view_layer_synced_ensure(scene, view_layer);
-              Base *base = BKE_view_layer_base_find(view_layer, obj_track->object);
-              if (base != nullptr) {
-                for (Base &b : view_layer->object_bases) {
-                  ed::object::base_select(&b, ed::object::BA_DESELECT);
-                }
-                ed::object::base_select(base, ed::object::BA_SELECT);
-                ed::object::base_activate(C, base);
-                DEG_id_tag_update(&scene->id, ID_RECALC_SELECT);
-                WM_event_add_notifier(C, NC_SCENE | ND_OB_ACTIVE, scene);
-                WM_event_add_notifier(C, NC_SCENE | ND_OB_SELECT, scene);
-                ED_area_tag_redraw(area);
+          if (better_timeline_track_object_slot_activate_isect(
+                  region, sbetter_timeline, obj_row, obj_track, event->mval[0], event->mval[1]))
+          {
+            Scene *scene = CTX_data_scene(C);
+            ViewLayer *view_layer = CTX_data_view_layer(C);
+            BKE_view_layer_synced_ensure(scene, view_layer);
+            Base *base = BKE_view_layer_base_find(view_layer, obj_track->object);
+            if (base != nullptr) {
+              for (Base &b : view_layer->object_bases) {
+                ed::object::base_select(&b, ed::object::BA_DESELECT);
               }
-              return OPERATOR_FINISHED;
+              ed::object::base_select(base, ed::object::BA_SELECT);
+              ed::object::base_activate(C, base);
+              DEG_id_tag_update(&scene->id, ID_RECALC_SELECT);
+              WM_event_add_notifier(C, NC_SCENE | ND_OB_ACTIVE, scene);
+              WM_event_add_notifier(C, NC_SCENE | ND_OB_SELECT, scene);
+              ED_area_tag_redraw(area);
             }
+            /* This click only targets the bound scene object. It should not complete the Better
+             * Timeline track-selection operator path or trigger Better Timeline undo snapshotting. */
+            return OPERATOR_CANCELLED;
           }
         }
       }
@@ -1368,6 +1420,7 @@ static void BETTER_TIMELINE_OT_track_pick_object(wmOperatorType *ot)
   ot->exec = better_timeline_track_pick_object_exec;
   ot->invoke = WM_enum_search_invoke;
   ot->poll = better_timeline_operator_region_poll;
+  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 
   PropertyRNA *prop = RNA_def_enum(
       ot->srna, "object", rna_enum_dummy_NULL_items, 0, "Object", "Scene object to bind");
