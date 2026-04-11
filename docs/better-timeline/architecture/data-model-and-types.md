@@ -15,6 +15,7 @@ struct BetterTimelineTrack {
   char flag;            // eBetterTimelineTrackFlag bitfield
   char _pad0[6];
   ListBaseT<BetterTimelineClip> clips;
+  ListBaseT<BetterTimelineTrack> group_tracks; // child tracks when this track is a group
   IDProperty *properties; // type-specific extra data — extend here, not in the struct
 };
 ```
@@ -23,16 +24,18 @@ struct BetterTimelineTrack {
 
 Track ownership rules:
 
-- `SpaceBetterTimeline::tracks` is the authoritative track list.
+- `SpaceBetterTimeline::tracks` is the authoritative **top-level** track list.
 - `BetterTimelineTrack::clips` is the authoritative per-track clip list.
+- `BetterTimelineTrack::group_tracks` holds child tracks when `track_type == BETTER_TIMELINE_TT_GROUP`. Currently one level of nesting only (children cannot themselves be groups).
 - Do not redesign clip storage as a detached global clip container.
 
 ### `flag` bits
 
-| Constant                        | Bit    | Effect                                                      |
-|---------------------------------|--------|-------------------------------------------------------------|
-| `BETTER_TIMELINE_TRACK_MUTED`   | `1<<0` | Row + canvas darkened; clips rendered grey; "Muted" label   |
-| `BETTER_TIMELINE_TRACK_LOCKED`  | `1<<1` | Row + canvas darkened; diagonal hatching; "Locked" label    |
+| Constant                           | Bit    | Effect                                                        |
+|------------------------------------|--------|---------------------------------------------------------------|
+| `BETTER_TIMELINE_TRACK_MUTED`      | `1<<0` | Row + canvas darkened; clips rendered grey; "Muted" label     |
+| `BETTER_TIMELINE_TRACK_LOCKED`     | `1<<1` | Row + canvas darkened; diagonal hatching; "Locked" label      |
+| `BETTER_TIMELINE_TRACK_COLLAPSED`  | `1<<2` | Group only: children hidden; row height stays 1 track row     |
 
 New flags follow the same pattern — add the bit here, add read helpers in `better_timeline_data.cc`, handle visual fallout in `better_timeline_draw.cc`, add click-toggle in `better_timeline_ops_tracks.cc`.
 
@@ -66,11 +69,17 @@ struct BetterTimelineTrackType {
 
 ### Built-in types (registered in `better_timeline_types.cc`)
 
-| idname                         | Accent colour (R,G,B)   | Icon                 | Accepts                        |
-|--------------------------------|-------------------------|----------------------|--------------------------------|
-| `BETTER_TIMELINE_TT_TEST`      | 0.38 · 0.51 · 0.68      | `ICON_SEQ_SEQUENCER` | `BETTER_TIMELINE_CT_TEST`      |
-| `BETTER_TIMELINE_TT_ANIMATION` | 0.35 · 0.62 · 0.43      | `ICON_ACTION`        | `BETTER_TIMELINE_CT_ANIMATION` |
-| `BETTER_TIMELINE_TT_SPLINE`    | 0.72 · 0.52 · 0.22      | `ICON_CURVE_DATA`    | `BETTER_TIMELINE_CT_SPLINE`    |
+| idname                         | Accent colour (R,G,B)   | Icon                 | Accepts                         | Notes            |
+|--------------------------------|-------------------------|----------------------|---------------------------------|------------------|
+| `BETTER_TIMELINE_TT_GROUP`     | 0.55 · 0.55 · 0.55      | `ICON_FILE_FOLDER`   | none (container only)           | `is_group = true` |
+| `BETTER_TIMELINE_TT_TEST`      | 0.38 · 0.51 · 0.68      | `ICON_SEQ_SEQUENCER` | `BETTER_TIMELINE_CT_TEST`       |                  |
+| `BETTER_TIMELINE_TT_ANIMATION` | 0.35 · 0.62 · 0.43      | `ICON_ACTION`        | `BETTER_TIMELINE_CT_ANIMATION`  |                  |
+| `BETTER_TIMELINE_TT_SPLINE`    | 0.72 · 0.52 · 0.22      | `ICON_CURVE_DATA`    | `BETTER_TIMELINE_CT_SPLINE`     |                  |
+
+The group type is registered **first** so it appears at the top of the Shift+A menu.
+
+`BetterTimelineTrackType::is_group = true` means: the track is a container, stores children in
+`group_tracks`, draws a collapse arrow instead of clip lanes, and accepts no clips itself.
 
 To look up a type at runtime: `ed::better_timeline::track_type_find_from_idname(track->track_type)`.
 
@@ -96,6 +105,51 @@ Important API entry points:
 Practical rule:
 
 - create, move, paste, duplicate, drag/drop, and inline property edits must all converge on the same compatibility and placement checks
+
+---
+
+---
+
+## Visible-Row System
+
+The track hierarchy is **not** flat. Groups hold child tracks in `group_tracks`. Collapsed groups
+hide children. Every piece of code that maps between a Y coordinate or a row index and a track
+**must** use the visible-row helpers, not raw `BLI_findlink` or flat index arithmetic.
+
+### Key types and functions (`better_timeline_data.cc`, `better_timeline_intern.hh`)
+
+```cpp
+struct BetterTimelineVisibleRow {
+  BetterTimelineTrack *track;
+  BetterTimelineTrack *parent_group; // nullptr for top-level
+  int indent;                        // 0 = top-level, 1 = inside group
+};
+
+Vector<BetterTimelineVisibleRow> better_timeline_visible_rows_build(sbetter_timeline);
+int          better_timeline_visible_row_count(sbetter_timeline);
+BetterTimelineTrack *better_timeline_visible_row_track_get(sbetter_timeline, row_index);
+int          better_timeline_visible_row_index_from_track_ptr(sbetter_timeline, track);
+```
+
+`better_timeline_visible_rows_build()` rebuilds the list from scratch on every call; do not cache
+it across frames (track changes are frequent and the list is cheap to rebuild for typical track
+counts).
+
+### `selected_track_index` semantics
+
+`SpaceBetterTimeline::selected_track_index` is a **visible-row index**, not a flat top-level
+index. It changes meaning when groups are present. Never use `BLI_findlink(&space->tracks, index)`
+to turn it back into a track pointer — use `better_timeline_visible_row_track_get()` instead.
+
+### Flat-list vs visible-row split
+
+Some operations still work on the **flat top-level list** (`sbetter_timeline->tracks`):
+
+- track reorder drag — moves tracks within the flat list
+- `better_timeline_track_index_from_ptr()` and `better_timeline_track_count()` — flat-list ops
+
+Code paths that drive UI (Y-to-row mapping, icon/name drawing, mute/lock hit-test, selection,
+clip drawing) must use the visible-row helpers. Check carefully when adding new operators.
 
 ---
 

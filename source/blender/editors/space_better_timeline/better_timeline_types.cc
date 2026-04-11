@@ -21,6 +21,7 @@
 
 namespace blender::ed::better_timeline {
 
+static constexpr const char *BETTER_TIMELINE_TRACK_TYPE_GROUP = "BETTER_TIMELINE_TT_GROUP";
 static constexpr const char *BETTER_TIMELINE_TRACK_TYPE_TEST = "BETTER_TIMELINE_TT_TEST";
 static constexpr const char *BETTER_TIMELINE_TRACK_TYPE_ANIMATION =
     "BETTER_TIMELINE_TT_ANIMATION";
@@ -70,7 +71,8 @@ static void ensure_builtin_types_registered()
                            std::initializer_list<const char *> compatible_clip_type_ids,
                            const float color[3],
                            const int icon,
-                           const bool has_object_slot = false) {
+                           const bool has_object_slot = false,
+                           const bool is_group = false) {
     auto track_type = std::make_unique<BetterTimelineTrackType>();
     STRNCPY_UTF8(track_type->idname, idname);
     STRNCPY_UTF8(track_type->label, label);
@@ -83,8 +85,22 @@ static void ensure_builtin_types_registered()
     track_type->color[2] = color[2];
     track_type->icon = icon;
     track_type->has_object_slot = has_object_slot;
+    track_type->is_group = is_group;
     track_type_register(std::move(track_type));
   };
+
+  /* Group type registered first so it appears at the top of add-track menus. */
+  {
+    static const float group_color[3] = {0.55f, 0.55f, 0.55f};
+    add_track_type(BETTER_TIMELINE_TRACK_TYPE_GROUP,
+                   "Track Group",
+                   "Container that holds and organises other tracks; can be collapsed",
+                   {},
+                   group_color,
+                   ICON_FILE_FOLDER,
+                   false,
+                   true);
+  }
 
   add_clip_type(BETTER_TIMELINE_CLIP_TYPE_TEST,
                 "Test Clip",

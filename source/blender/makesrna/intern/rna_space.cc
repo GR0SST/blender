@@ -1311,17 +1311,23 @@ static BetterTimelineTrack *rna_SpaceBetterTimeline_active_track_lookup(SpaceBet
     return nullptr;
   }
 
-  BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
-      BLI_findlink(&space->tracks, space->selected_track_index));
-  if (track != nullptr && track->selected != 0) {
-    return track;
-  }
-
-  for (track = static_cast<BetterTimelineTrack *>(space->tracks.first); track != nullptr;
+  /* Walk top-level tracks and one level of group children to find the first selected track.
+   * selected_track_index is a visible-row index and cannot be used with BLI_findlink directly. */
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(space->tracks.first);
+       track != nullptr;
        track = track->next)
   {
     if (track->selected != 0) {
       return track;
+    }
+    for (BetterTimelineTrack *child = static_cast<BetterTimelineTrack *>(
+             track->group_tracks.first);
+         child != nullptr;
+         child = child->next)
+    {
+      if (child->selected != 0) {
+        return child;
+      }
     }
   }
 

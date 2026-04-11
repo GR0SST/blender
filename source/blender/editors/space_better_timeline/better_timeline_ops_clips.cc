@@ -79,14 +79,14 @@ static BetterTimelineTrack *better_timeline_active_selected_track_get(
     return nullptr;
   }
 
-  BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline,
-                                                              sbetter_timeline->selected_track_index);
+  BetterTimelineTrack *track = better_timeline_visible_row_track_get(
+      sbetter_timeline, sbetter_timeline->selected_track_index);
   if (track != nullptr && better_timeline_track_is_selected(track)) {
     return track;
   }
 
   const int selected_index = better_timeline_first_selected_track_index(sbetter_timeline);
-  return better_timeline_track_at_index(sbetter_timeline, selected_index);
+  return better_timeline_visible_row_track_get(sbetter_timeline, selected_index);
 }
 
 static BetterTimelineClip *better_timeline_active_selected_clip_get(
@@ -109,9 +109,11 @@ static BetterTimelineClip *better_timeline_active_selected_clip_get(
     return clip;
   }
 
-  for (track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first); track != nullptr;
-       track = track->next)
-  {
+  for (const BetterTimelineVisibleRow &row : better_timeline_all_tracks_build(sbetter_timeline)) {
+    track = row.track;
+    if (better_timeline_track_is_group(track)) {
+      continue;
+    }
     for (clip = static_cast<BetterTimelineClip *>(track->clips.first); clip != nullptr;
          clip = clip->next)
     {
@@ -142,10 +144,12 @@ static Vector<BetterTimelineClipVisualOrderItem> better_timeline_clips_in_visual
   }
 
   int global_index = 0;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
+  const Vector<BetterTimelineVisibleRow> all_rows = better_timeline_all_tracks_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : all_rows) {
+    BetterTimelineTrack *track = row.track;
+    if (better_timeline_track_is_group(track)) {
+      continue;
+    }
     if (better_timeline_track_is_locked(track)) {
       global_index += BLI_listbase_count(&track->clips);
       continue;
@@ -280,7 +284,10 @@ static rctf better_timeline_clip_rect(const ARegion *region,
                                       const BetterTimelineTrack *track,
                                       const BetterTimelineClip *clip)
 {
-  const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, track);
+  /* Use the visible-row index so tracks inside groups get the correct Y position.
+   * better_timeline_track_index_from_ptr only walks the top-level list and returns -1
+   * for group children. */
+  const int row_index = better_timeline_visible_row_index_from_track_ptr(sbetter_timeline, track);
   const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
   const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
   const float clip_y_max = row_y_max - (BETTER_TIMELINE_CLIP_VERTICAL_MARGIN * UI_SCALE_FAC);
@@ -307,7 +314,7 @@ BetterTimelineClip *better_timeline_clip_from_region_position(const ARegion *reg
   }
 
   const int row_index = better_timeline_track_from_region_y(region, sbetter_timeline, region_y);
-  BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+  BetterTimelineTrack *track = better_timeline_visible_row_track_get(sbetter_timeline, row_index);
   if (track == nullptr || better_timeline_track_is_locked(track)) {
     return nullptr;
   }
@@ -367,11 +374,9 @@ static bool better_timeline_clip_box_select_apply(bContext *C,
   }
 
   bool any_intersection = false;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    if (better_timeline_track_is_locked(track)) {
+  for (const BetterTimelineVisibleRow &row : better_timeline_visible_rows_build(sbetter_timeline)) {
+    BetterTimelineTrack *track = row.track;
+    if (better_timeline_track_is_group(track) || better_timeline_track_is_locked(track)) {
       continue;
     }
 
@@ -490,7 +495,9 @@ static wmOperatorStatus better_timeline_clip_select_invoke(bContext *C,
   const bool oskey = (event->modifier & KM_OSKEY) != 0;
   if (better_timeline_scrub_event_in_region(area, region, event) ||
       better_timeline_is_in_add_button(region, sbetter_timeline, event->mval[0], event->mval[1]) ||
-      better_timeline_is_on_panel_divider(region, sbetter_timeline, event->mval[0]))
+      better_timeline_is_on_panel_divider(region, sbetter_timeline, event->mval[0]) ||
+      better_timeline_is_in_track_scrollbar(
+          region, sbetter_timeline, event->mval[0], event->mval[1]))
   {
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
   }
@@ -717,10 +724,11 @@ static bool better_timeline_clip_drag_start(bContext *C,
   drag_data->remove_on_cancel = false;
   drag_data->last_mouse_y = event->mval[1];
 
-  for (BetterTimelineTrack *selected_track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       selected_track != nullptr;
-       selected_track = selected_track->next)
-  {
+  for (const BetterTimelineVisibleRow &sel_row : better_timeline_all_tracks_build(sbetter_timeline)) {
+    BetterTimelineTrack *selected_track = sel_row.track;
+    if (better_timeline_track_is_group(selected_track)) {
+      continue;
+    }
     for (BetterTimelineClip *selected_clip = static_cast<BetterTimelineClip *>(selected_track->clips.first);
          selected_clip != nullptr;
          selected_clip = selected_clip->next)
@@ -795,7 +803,7 @@ static wmOperatorStatus better_timeline_clip_drag_modal(bContext *C,
       const int target_index = better_timeline_track_from_region_y(
           region, sbetter_timeline, event->mval[1]);
       if (target_index >= 0) {
-        target_track = better_timeline_track_at_index(sbetter_timeline, target_index);
+        target_track = better_timeline_visible_row_track_get(sbetter_timeline, target_index);
       }
     }
     else {
@@ -1022,6 +1030,13 @@ static wmOperatorStatus better_timeline_clip_drag_invoke(bContext *C,
     return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
   }
 
+  /* Custom track scrollbar takes priority: pass through so scrollbar_drag can handle it. */
+  if (better_timeline_is_in_track_scrollbar(
+          region, sbetter_timeline, event->mval[0], event->mval[1]))
+  {
+    return OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH;
+  }
+
   BetterTimelineTrack *track = nullptr;
   BetterTimelineClip *clip = better_timeline_clip_from_region_position(
       region, sbetter_timeline, event->mval[0], event->mval[1], &track);
@@ -1072,10 +1087,11 @@ static wmOperatorStatus better_timeline_move_clip_invoke(bContext *C,
   ScrArea *area = CTX_wm_area(C);
   auto *sbetter_timeline = static_cast<SpaceBetterTimeline *>(area->spacedata.first);
 
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
+  for (const BetterTimelineVisibleRow &row : better_timeline_all_tracks_build(sbetter_timeline)) {
+    BetterTimelineTrack *track = row.track;
+    if (better_timeline_track_is_group(track)) {
+      continue;
+    }
     for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
          clip != nullptr;
          clip = clip->next)
@@ -1102,10 +1118,12 @@ static wmOperatorStatus better_timeline_delete_clip_exec(bContext *C, wmOperator
   }
 
   better_timeline_undo_push_init(C, op->type->name);
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
+  const Vector<BetterTimelineVisibleRow> all_rows = better_timeline_all_tracks_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : all_rows) {
+    BetterTimelineTrack *track = row.track;
+    if (better_timeline_track_is_group(track)) {
+      continue;
+    }
     BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
     while (clip != nullptr) {
       BetterTimelineClip *clip_next = clip->next;
@@ -1229,10 +1247,11 @@ static wmOperatorStatus better_timeline_duplicate_clip_invoke(bContext *C,
 
   BetterTimelineClip *active_duplicate = nullptr;
   BetterTimelineTrack *active_track = nullptr;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
+  for (const BetterTimelineVisibleRow &row : better_timeline_all_tracks_build(sbetter_timeline)) {
+    BetterTimelineTrack *track = row.track;
+    if (better_timeline_track_is_group(track)) {
+      continue;
+    }
     Vector<BetterTimelineClip *> selected_source_clips;
     for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first); clip != nullptr;
          clip = clip->next)
@@ -1299,10 +1318,11 @@ static wmOperatorStatus better_timeline_copy_clip_exec(bContext *C, wmOperator *
 
   better_timeline_clip_clipboard_clear();
   float anchor_start = FLT_MAX;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
+  for (const BetterTimelineVisibleRow &row : better_timeline_all_tracks_build(sbetter_timeline)) {
+    BetterTimelineTrack *track = row.track;
+    if (better_timeline_track_is_group(track)) {
+      continue;
+    }
     for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first); clip != nullptr;
          clip = clip->next)
     {
@@ -1501,7 +1521,7 @@ BetterTimelineClip *better_timeline_clip_for_resize_from_region_position(
   }
 
   const int row_index = better_timeline_track_from_region_y(region, sbetter_timeline, region_y);
-  BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+  BetterTimelineTrack *track = better_timeline_visible_row_track_get(sbetter_timeline, row_index);
   if (track == nullptr || better_timeline_track_is_locked(track)) {
     return nullptr;
   }

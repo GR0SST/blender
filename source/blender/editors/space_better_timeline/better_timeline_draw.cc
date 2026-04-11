@@ -737,6 +737,31 @@ static void better_timeline_draw_clip_box_select_overlay(
   GPU_matrix_pop_projection();
 }
 
+/** Recursively collect all clips from all descendant tracks of a group. */
+static void better_timeline_collect_group_clips(
+    const BetterTimelineTrack *group,
+    blender::Vector<const BetterTimelineClip *> &out_clips)
+{
+  for (const BetterTimelineTrack *child =
+           static_cast<const BetterTimelineTrack *>(group->group_tracks.first);
+       child != nullptr;
+       child = child->next)
+  {
+    if (better_timeline_track_is_group(child)) {
+      better_timeline_collect_group_clips(child, out_clips);
+    }
+    else {
+      for (const BetterTimelineClip *clip =
+               static_cast<const BetterTimelineClip *>(child->clips.first);
+           clip != nullptr;
+           clip = clip->next)
+      {
+        out_clips.append(clip);
+      }
+    }
+  }
+}
+
 static void better_timeline_draw_clips(const ARegion *region,
                                        const SpaceBetterTimeline *sbetter_timeline,
                                        const View2D *v2d)
@@ -753,7 +778,9 @@ static void better_timeline_draw_clips(const ARegion *region,
   const uint pos = GPU_vertformat_attr_add(format, "pos", gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
-  const int track_count = better_timeline_track_count(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> visible_rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
+  const int row_count = int(visible_rows.size());
   const SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
   const BetterTimelineClipDragVisualState *clip_drag_state =
       (runtime != nullptr) ? &runtime->clip_drag_visual_state : nullptr;
@@ -763,13 +790,81 @@ static void better_timeline_draw_clips(const ARegion *region,
       (runtime != nullptr) ? &runtime->clip_resize_visual_state : nullptr;
   const bool clip_resize_active = clip_resize_state != nullptr && clip_resize_state->active &&
                                   clip_resize_state->region == region;
-  for (int row_index = 0; row_index < track_count; row_index++) {
+  for (int row_index = 0; row_index < row_count; row_index++) {
     if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
       continue;
     }
 
-    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    const BetterTimelineTrack *track = visible_rows[row_index].track;
     if (track == nullptr) {
+      continue;
+    }
+
+    if (better_timeline_track_is_group(track)) {
+      if (!better_timeline_track_is_collapsed(track)) {
+        /* Expanded group: children draw their own clips. */
+        continue;
+      }
+      /* Collapsed group: collect all descendant clips, merge overlapping frame ranges,
+       * then draw each merged interval as a single gray rectangle.
+       * This prevents clips from different tracks stacking visually at the same time range. */
+      blender::Vector<const BetterTimelineClip *> group_clips;
+      better_timeline_collect_group_clips(track, group_clips);
+      if (group_clips.is_empty()) {
+        continue;
+      }
+      /* Build sorted list of (start, end) intervals in frame space. */
+      blender::Vector<std::pair<float, float>> intervals;
+      intervals.reserve(group_clips.size());
+      for (const BetterTimelineClip *clip : group_clips) {
+        float s = float(clip->start_frame);
+        float e = float(clip->end_frame);
+        if (e <= s) {
+          e = s + 1.0f;
+        }
+        intervals.append({s, e});
+      }
+      std::sort(intervals.begin(), intervals.end(), [](const auto &a, const auto &b) {
+        return a.first < b.first;
+      });
+      /* Merge overlapping / touching intervals. */
+      blender::Vector<std::pair<float, float>> merged;
+      merged.append(intervals[0]);
+      for (int ii = 1; ii < int(intervals.size()); ii++) {
+        auto &last = merged.last();
+        if (intervals[ii].first <= last.second) {
+          last.second = std::max(last.second, intervals[ii].second);
+        }
+        else {
+          merged.append(intervals[ii]);
+        }
+      }
+      const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
+      const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
+      const float ghost_y_max = row_y_max - (8.0f * UI_SCALE_FAC);
+      const float ghost_y_min = row_y_min + (8.0f * UI_SCALE_FAC);
+      for (const auto &interval : merged) {
+        float start_x = ui::view2d_view_to_region_x(v2d, interval.first);
+        float end_x = ui::view2d_view_to_region_x(v2d, interval.second);
+        if (end_x < body_rect.xmin || start_x > body_rect.xmax) {
+          continue;
+        }
+        end_x = std::max(end_x, start_x + (6.0f * UI_SCALE_FAC));
+        float sy_min = ghost_y_min;
+        float sy_max = ghost_y_max;
+        better_timeline_clip_rect_pixel_snap(&start_x, &end_x, &sy_min, &sy_max);
+        immUniformColor4f(0.55f, 0.55f, 0.55f, 0.50f);
+        immRectf(pos, start_x, sy_min, end_x, sy_max);
+        /* Subtle outline */
+        immUniformColor4f(0.70f, 0.70f, 0.70f, 0.35f);
+        GPU_line_width(1.0f);
+        immBegin(GPU_PRIM_LINE_LOOP, 4);
+        immVertex2f(pos, start_x, sy_min);
+        immVertex2f(pos, end_x, sy_min);
+        immVertex2f(pos, end_x, sy_max);
+        immVertex2f(pos, start_x, sy_max);
+        immEnd();
+      }
       continue;
     }
 
@@ -918,7 +1013,7 @@ static void better_timeline_draw_clips(const ARegion *region,
     for (int i = 0; i < clip_drag_state->moved_clips.size(); i++) {
       const BetterTimelineClip *clip = clip_drag_state->moved_clips[i];
       const BetterTimelineTrack *preview_track = clip_drag_state->moved_clip_tracks[i];
-      const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
+      const int row_index = better_timeline_visible_row_index_from_track_ptr(sbetter_timeline, preview_track);
       if (row_index < 0) {
         continue;
       }
@@ -970,7 +1065,7 @@ static void better_timeline_draw_clips(const ARegion *region,
     for (int i = 0; i < clip_drag_state->moved_clips.size(); i++) {
       const BetterTimelineClip *preview_clip = clip_drag_state->moved_clips[i];
       const BetterTimelineTrack *preview_track = clip_drag_state->moved_clip_tracks[i];
-      const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
+      const int row_index = better_timeline_visible_row_index_from_track_ptr(sbetter_timeline, preview_track);
       if (row_index < 0) {
         continue;
       }
@@ -1034,7 +1129,8 @@ static void better_timeline_draw_clips(const ARegion *region,
   {
     const BetterTimelineClip *clip = clip_resize_state->clip;
     const BetterTimelineTrack *preview_track = clip_resize_state->track;
-    const int row_index = better_timeline_track_index_from_ptr(sbetter_timeline, preview_track);
+    const int row_index = better_timeline_visible_row_index_from_track_ptr(
+        sbetter_timeline, preview_track);
     if (row_index >= 0) {
       const float row_y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
       const float row_y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
@@ -1124,7 +1220,8 @@ static void better_timeline_draw_clips(const ARegion *region,
 void better_timeline_track_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
                                                     const ARegion *region,
                                                     const BetterTimelineTrack *dragged_track,
-                                                    const int insertion_index)
+                                                    const float insertion_y,
+                                                    const BetterTimelineTrack *drop_group_target)
 {
   SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
   if (runtime == nullptr) {
@@ -1132,7 +1229,8 @@ void better_timeline_track_drag_visual_state_update(const SpaceBetterTimeline *s
   }
   runtime->track_drag_visual_state.region = region;
   runtime->track_drag_visual_state.dragged_track = dragged_track;
-  runtime->track_drag_visual_state.insertion_index = insertion_index;
+  runtime->track_drag_visual_state.insertion_y = insertion_y;
+  runtime->track_drag_visual_state.drop_group_target = drop_group_target;
   runtime->track_drag_visual_state.active = true;
 }
 
@@ -1144,7 +1242,8 @@ void better_timeline_track_drag_visual_state_clear(SpaceBetterTimeline *sbetter_
   }
   runtime->track_drag_visual_state.region = nullptr;
   runtime->track_drag_visual_state.dragged_track = nullptr;
-  runtime->track_drag_visual_state.insertion_index = -1;
+  runtime->track_drag_visual_state.insertion_y = -1.0f;
+  runtime->track_drag_visual_state.drop_group_target = nullptr;
   runtime->track_drag_visual_state.active = false;
 }
 
@@ -1153,7 +1252,9 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
 {
   const int left_panel_width = better_timeline_left_panel_width(region, sbetter_timeline);
   const int content_top = better_timeline_content_height(region);
-  const int track_count = better_timeline_track_count(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> visible_rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
+  const int track_count = int(visible_rows.size());
   const SpaceBetterTimeline_Runtime *runtime = better_timeline_runtime_get(sbetter_timeline);
   const BetterTimelineTrackDragVisualState *track_drag_state =
       (runtime != nullptr) ? &runtime->track_drag_visual_state : nullptr;
@@ -1162,9 +1263,12 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
   const BetterTimelineTrack *dragged_track = drag_active ? track_drag_state->dragged_track :
                                                            nullptr;
   const int dragged_track_index = drag_active ?
-                                      better_timeline_track_index_from_ptr(sbetter_timeline,
-                                                                           dragged_track) :
+                                      better_timeline_visible_row_index_from_track_ptr(
+                                          sbetter_timeline, dragged_track) :
                                       -1;
+  const BetterTimelineTrack *drop_group_target = (drag_active && track_drag_state != nullptr) ?
+                                                      track_drag_state->drop_group_target :
+                                                      nullptr;
   float drag_color[3] = {0.0f, 0.0f, 0.0f};
   const float insertion_color[3] = {0.29f, 0.58f, 0.96f};
   ui::theme::get_color_3fv(TH_SELECT, drag_color);
@@ -1212,9 +1316,10 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
     const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
 
-    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    const BetterTimelineTrack *track = visible_rows[row_index].track;
     const bool track_muted = better_timeline_track_is_muted(track);
     const bool track_locked = better_timeline_track_is_locked(track);
+    const bool is_group = better_timeline_track_is_group(track);
     if (better_timeline_track_is_selected(track)) {
       immUniformColor4f(0.25f, 0.40f, 0.72f, 0.92f);
       immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
@@ -1231,12 +1336,12 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       }
     }
     else {
-      /* The track list is its own opaque pane; keep the timeline content from bleeding through it.
-       */
-      immUniformColor4f(0.19f, 0.19f, 0.19f, 1.0f);
+      /* Group tracks use a slightly darker/distinct panel background to read as containers. */
+      const float panel_r = is_group ? 0.14f : 0.19f;
+      immUniformColor4f(panel_r, panel_r, panel_r, 1.0f);
       immRectf(pos, 0.0f, y_min, float(left_panel_width), y_max);
 
-      immUniformColor4f(1.0f, 1.0f, 1.0f, 0.055f);
+      immUniformColor4f(1.0f, 1.0f, 1.0f, is_group ? 0.03f : 0.055f);
       immRectf(pos, float(left_panel_width), y_min, float(region->winx), y_max);
     }
 
@@ -1269,9 +1374,8 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
   immVertex2f(pos, float(left_panel_width), float(region->winy));
   immEnd();
 
-  if (drag_active && dragged_track_index >= 0) {
-    const float insertion_y = better_timeline_track_insertion_y(
-        region, sbetter_timeline, track_drag_state->insertion_index);
+  if (drag_active && dragged_track_index >= 0 && drop_group_target == nullptr) {
+    const float insertion_y = track_drag_state->insertion_y;
 
     immUniformColor4f(
         insertion_color[0], insertion_color[1], insertion_color[2], 0.95f);
@@ -1284,6 +1388,32 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     immVertex2f(pos, float(region->winx - 10), insertion_y - 7.0f);
     immVertex2f(pos, float(region->winx - 10), insertion_y + 7.0f);
     immEnd();
+  }
+
+  /* Drag-to-group highlight: bright border on the target group row. */
+  if (drag_active && drop_group_target != nullptr) {
+    const int group_row = better_timeline_visible_row_index_from_track_ptr(sbetter_timeline,
+                                                                            drop_group_target);
+    if (group_row >= 0) {
+      const float gy_min = better_timeline_row_ymin(region, sbetter_timeline, group_row);
+      const float gy_max = better_timeline_row_ymax(region, sbetter_timeline, group_row);
+      /* Filled tint on the whole row. */
+      immUniformColor4f(insertion_color[0], insertion_color[1], insertion_color[2], 0.22f);
+      immRectf(pos, 0.0f, gy_min, float(region->winx), gy_max);
+      /* Bright border around the row. */
+      GPU_line_width(2.0f);
+      immUniformColor4f(insertion_color[0], insertion_color[1], insertion_color[2], 0.95f);
+      immBegin(GPU_PRIM_LINES, 8);
+      immVertex2f(pos, 0.0f, gy_min);
+      immVertex2f(pos, float(region->winx), gy_min);
+      immVertex2f(pos, 0.0f, gy_max);
+      immVertex2f(pos, float(region->winx), gy_max);
+      immVertex2f(pos, 0.0f, gy_min);
+      immVertex2f(pos, 0.0f, gy_max);
+      immVertex2f(pos, float(region->winx), gy_min);
+      immVertex2f(pos, float(region->winx), gy_max);
+      immEnd();
+    }
   }
   better_timeline_clip_end(content_clip_state);
 
@@ -1342,8 +1472,7 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
         continue;
       }
-      const BetterTimelineTrack *track_s = better_timeline_track_at_index(sbetter_timeline,
-                                                                          row_index);
+      const BetterTimelineTrack *track_s = visible_rows[row_index].track;
       if (!better_timeline_track_is_locked(track_s)) {
         continue;
       }
@@ -1369,16 +1498,18 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
         continue;
       }
-      const BetterTimelineTrack *track = better_timeline_track_at_index(
-          sbetter_timeline, row_index);
+      const BetterTimelineTrack *track = visible_rows[row_index].track;
       if (track == nullptr) {
         continue;
       }
+      const int row_indent = visible_rows[row_index].indent;
+      const float indent_x = float(row_indent) * 16.0f * UI_SCALE_FAC;
       const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
       const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
       const float accent_w = float(BETTER_TIMELINE_TRACK_ACCENT_WIDTH) * UI_SCALE_FAC;
 
-      /* Left accent bar: coloured stripe representing the track type. */
+      /* Left accent bar: coloured stripe representing the track type.
+       * Indented for child tracks so the bar aligns with its parent group's left edge. */
       float accent_color[3] = {0.5f, 0.5f, 0.5f};
       const ed::better_timeline::BetterTimelineTrackType *tt =
           ed::better_timeline::track_type_find_from_idname(track->track_type);
@@ -1390,7 +1521,11 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       const float accent_alpha = better_timeline_track_is_muted(track) ? 0.35f : 0.88f;
       const float accent_pad = 1.0f * UI_SCALE_FAC;
       immUniformColor4f(accent_color[0], accent_color[1], accent_color[2], accent_alpha);
-      immRectf(pos2, accent_pad, y_min + accent_pad, accent_w, y_max - accent_pad);
+      immRectf(pos2,
+               indent_x + accent_pad,
+               y_min + accent_pad,
+               indent_x + accent_w,
+               y_max - accent_pad);
 
       /* Subtle button background for mute/lock button zone. */
       const rcti mute_rect = better_timeline_track_mute_button_rect(
@@ -1424,8 +1559,7 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
       continue;
     }
-    const BetterTimelineTrack *track = better_timeline_track_at_index(
-        sbetter_timeline, row_index);
+    const BetterTimelineTrack *track = visible_rows[row_index].track;
     if (track == nullptr) {
       continue;
     }
@@ -1455,10 +1589,13 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
       continue;
     }
-    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    const BetterTimelineTrack *track = visible_rows[row_index].track;
     if (track == nullptr) {
       continue;
     }
+    const int row_indent_name = visible_rows[row_index].indent;
+    const float indent_x_name = float(row_indent_name) * 16.0f * UI_SCALE_FAC;
+    const bool is_group_name = better_timeline_track_is_group(track);
     uchar text_color[4];
     ui::theme::get_color_4ubv(better_timeline_track_is_selected(track) ? TH_HEADER_TEXT_HI :
                                                                            TH_TEXT,
@@ -1468,10 +1605,14 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
     }
     BLF_color4ubv(BLF_default(), text_color);
 
-    /* Name starts after: accent bar + gap + icon area + gap. */
+    /* Name starts after: indent + accent bar + gap + icon area + gap.
+     * Group tracks have an extra collapse-arrow icon before the folder icon. */
     const float accent_w = float(BETTER_TIMELINE_TRACK_ACCENT_WIDTH) * UI_SCALE_FAC;
     const float icon_area = float(BETTER_TIMELINE_TRACK_BUTTON_SIZE) * UI_SCALE_FAC;
-    const float name_x = accent_w + (4.0f * UI_SCALE_FAC) + icon_area + (4.0f * UI_SCALE_FAC);
+    const float icon_size_f = float(UI_ICON_SIZE);
+    const float name_x = is_group_name ?
+        indent_x_name + accent_w + (4.0f * UI_SCALE_FAC) + icon_size_f + (2.0f * UI_SCALE_FAC) + icon_area + (4.0f * UI_SCALE_FAC) :
+        indent_x_name + accent_w + (4.0f * UI_SCALE_FAC) + icon_area + (4.0f * UI_SCALE_FAC);
     const float row_ymin = better_timeline_row_ymin(region, sbetter_timeline, row_index);
 
     const ed::better_timeline::BetterTimelineTrackType *tt_name =
@@ -1515,15 +1656,19 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
   better_timeline_clip_end(content_clip_state);
 
   /* --- Icon pass: track type icon + mute/lock button icons --- */
+  better_timeline_clip_begin(region, content_rect, &content_clip_state);
   GPU_blend(GPU_BLEND_ALPHA);
   for (int row_index = 0; row_index < track_count; row_index++) {
     if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
       continue;
     }
-    const BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, row_index);
+    const BetterTimelineTrack *track = visible_rows[row_index].track;
     if (track == nullptr) {
       continue;
     }
+    const int row_indent_icon = visible_rows[row_index].indent;
+    const float indent_x_icon = float(row_indent_icon) * 16.0f * UI_SCALE_FAC;
+    const bool is_group_icon = better_timeline_track_is_group(track);
     const float y_min = better_timeline_row_ymin(region, sbetter_timeline, row_index);
     const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
     const float row_center_y = (y_min + y_max) * 0.5f;
@@ -1537,22 +1682,54 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       icon_color[3] = uchar(icon_color[3] * 0.78f);
     }
 
-    /* Track type icon. */
+    const float type_icon_alpha = better_timeline_track_is_muted(track) ? 0.72f : 0.92f;
+    const float type_icon_y = row_center_y - icon_size * 0.5f;
+
+    if (is_group_icon) {
+      /* Group track: collapse arrow + folder icon. */
+      const bool collapsed = better_timeline_track_is_collapsed(track);
+      const int arrow_icon = collapsed ? ICON_TRIA_RIGHT : ICON_TRIA_DOWN;
+      const float arrow_x = indent_x_icon + accent_w + (2.0f * UI_SCALE_FAC);
+      ui::icon_draw_ex(arrow_x,
+                       type_icon_y,
+                       arrow_icon,
+                       1.0f / UI_SCALE_FAC,
+                       type_icon_alpha,
+                       0.0f,
+                       icon_color,
+                       false,
+                       nullptr);
+      const float folder_x = arrow_x + icon_size + (2.0f * UI_SCALE_FAC);
+      ui::icon_draw_ex(folder_x,
+                       type_icon_y,
+                       ICON_FILE_FOLDER,
+                       1.0f / UI_SCALE_FAC,
+                       type_icon_alpha,
+                       0.0f,
+                       icon_color,
+                       false,
+                       nullptr);
+    }
+    else {
+      /* Regular track: single type icon. */
+      const ed::better_timeline::BetterTimelineTrackType *tt =
+          ed::better_timeline::track_type_find_from_idname(track->track_type);
+      const int type_icon = (tt != nullptr) ? tt->icon : ICON_SEQUENCE;
+      const float type_icon_x = indent_x_icon + accent_w + (2.0f * UI_SCALE_FAC);
+      ui::icon_draw_ex(type_icon_x,
+                       type_icon_y,
+                       type_icon,
+                       1.0f / UI_SCALE_FAC,
+                       type_icon_alpha,
+                       0.0f,
+                       icon_color,
+                       false,
+                       nullptr);
+    }
+
+    /* Track type icon lookup kept for the object slot path below. */
     const ed::better_timeline::BetterTimelineTrackType *tt =
         ed::better_timeline::track_type_find_from_idname(track->track_type);
-    const int type_icon = (tt != nullptr) ? tt->icon : ICON_SEQUENCE;
-    const float type_icon_x = accent_w + (2.0f * UI_SCALE_FAC);
-    const float type_icon_y = row_center_y - icon_size * 0.5f;
-    const float type_icon_alpha = better_timeline_track_is_muted(track) ? 0.72f : 0.92f;
-    ui::icon_draw_ex(type_icon_x,
-                     type_icon_y,
-                     type_icon,
-                     1.0f / UI_SCALE_FAC,
-                     type_icon_alpha,
-                     0.0f,
-                     icon_color,
-                     false,
-                     nullptr);
 
     /* Object slot icon: small OBJECT_DATA icon at the left edge of the slot bar. */
     if (tt != nullptr && tt->has_object_slot) {
@@ -1629,6 +1806,7 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
                      nullptr);
   }
   GPU_blend(GPU_BLEND_NONE);
+  better_timeline_clip_end(content_clip_state);
 
   /* --- "Locked" / "Muted" status label in the timeline canvas --- */
   {
@@ -1670,8 +1848,7 @@ static void better_timeline_draw_layout_overlay(const ARegion *region,
       if (!better_timeline_row_is_visible(region, sbetter_timeline, row_index)) {
         continue;
       }
-      const BetterTimelineTrack *track_l = better_timeline_track_at_index(sbetter_timeline,
-                                                                          row_index);
+      const BetterTimelineTrack *track_l = visible_rows[row_index].track;
       const bool lbl_muted = better_timeline_track_is_muted(track_l);
       const bool lbl_locked = better_timeline_track_is_locked(track_l);
       if (!lbl_muted && !lbl_locked) {

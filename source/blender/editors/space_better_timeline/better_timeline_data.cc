@@ -287,7 +287,19 @@ static void better_timeline_undosys_step_encode_init(bContext *C, UndoStep *us_p
 static bool better_timeline_undosys_step_encode(bContext *C, Main * /*bmain*/, UndoStep *us_p)
 {
   auto *us = reinterpret_cast<BetterTimelineUndoStep *>(us_p);
-  auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(CTX_wm_space_data(C));
+  /* Guard against being finalized with a non–Better-Timeline context.
+   * This can happen when a half-open push_init step (started from inside a non-OPTYPE_UNDO
+   * operator) is later finalized by ED_undo_push from an unrelated area (e.g. 3D viewport). */
+  const ScrArea *area = CTX_wm_area(C);
+  const SpaceLink *space_link = CTX_wm_space_data(C);
+  if (area == nullptr || space_link == nullptr ||
+      area->spacetype != SPACE_BETTER_TIMELINE ||
+      space_link->spacetype != SPACE_BETTER_TIMELINE)
+  {
+    return false;
+  }
+  auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(
+      const_cast<SpaceLink *>(space_link));
   if (sbetter_timeline == nullptr) {
     return false;
   }
@@ -366,6 +378,208 @@ bool better_timeline_track_is_locked(const BetterTimelineTrack *track)
   return track != nullptr && (track->flag & BETTER_TIMELINE_TRACK_LOCKED) != 0;
 }
 
+bool better_timeline_track_is_group(const BetterTimelineTrack *track)
+{
+  if (track == nullptr || track->track_type[0] == '\0') {
+    return false;
+  }
+  return STREQ(track->track_type,
+               ed::better_timeline::BETTER_TIMELINE_TRACK_TYPE_GROUP_IDNAME);
+}
+
+bool better_timeline_track_is_collapsed(const BetterTimelineTrack *track)
+{
+  return track != nullptr && (track->flag & BETTER_TIMELINE_TRACK_COLLAPSED) != 0;
+}
+
+/* --------------------------------------------------------------------------
+ * Group hierarchy helpers.
+ * -------------------------------------------------------------------------- */
+
+bool better_timeline_track_is_descendant_of(const BetterTimelineTrack *track,
+                                             const BetterTimelineTrack *ancestor_candidate)
+{
+  if (track == nullptr || ancestor_candidate == nullptr) {
+    return false;
+  }
+  for (const BetterTimelineTrack *child = static_cast<const BetterTimelineTrack *>(
+           ancestor_candidate->group_tracks.first);
+       child != nullptr;
+       child = child->next)
+  {
+    if (child == track) {
+      return true;
+    }
+    if (better_timeline_track_is_descendant_of(track, child)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool better_timeline_would_create_group_cycle(const SpaceBetterTimeline *sbetter_timeline,
+                                               const BetterTimelineTrack *target_group)
+{
+  if (target_group == nullptr) {
+    return false;
+  }
+  /* Check whether any effectively-selected track is an ancestor of (or equal to) target_group.
+   * Moving such a track into target_group would create a cycle. */
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    if (!better_timeline_track_is_selected(row.track)) {
+      continue;
+    }
+    /* Skip children of selected groups — they travel with their parent. */
+    if (row.parent_group != nullptr && better_timeline_track_is_selected(row.parent_group)) {
+      continue;
+    }
+    if (row.track == target_group) {
+      return true; /* Can't drop a group into itself. */
+    }
+    if (better_timeline_track_is_descendant_of(target_group, row.track)) {
+      return true; /* target_group is inside a selected track → would create a cycle. */
+    }
+  }
+  return false;
+}
+
+/* --------------------------------------------------------------------------
+ * Visible row helpers.
+ * -------------------------------------------------------------------------- */
+
+/** Recursive helper that appends visible rows for all children of a group.
+ *  Respects collapse state; stops recursing when a group is collapsed. */
+static void better_timeline_visible_rows_append(Vector<BetterTimelineVisibleRow> &rows,
+                                                const ListBase *tracks,
+                                                BetterTimelineTrack *parent_group,
+                                                const int indent)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
+       track != nullptr;
+       track = track->next)
+  {
+    BetterTimelineVisibleRow row;
+    row.track = track;
+    row.parent_group = parent_group;
+    row.indent = indent;
+    rows.append(row);
+
+    if (better_timeline_track_is_group(track) && !better_timeline_track_is_collapsed(track)) {
+      better_timeline_visible_rows_append(rows, &track->group_tracks, track, indent + 1);
+    }
+  }
+}
+
+Vector<BetterTimelineVisibleRow> better_timeline_visible_rows_build(
+    const SpaceBetterTimeline *sbetter_timeline)
+{
+  Vector<BetterTimelineVisibleRow> rows;
+  if (sbetter_timeline == nullptr) {
+    return rows;
+  }
+  better_timeline_visible_rows_append(rows, &sbetter_timeline->tracks, nullptr, 0);
+  return rows;
+}
+
+int better_timeline_visible_row_count(const SpaceBetterTimeline *sbetter_timeline)
+{
+  return int(better_timeline_visible_rows_build(sbetter_timeline).size());
+}
+
+/** Like better_timeline_visible_rows_append but ignores collapsed state.
+ *  Used for clip operations that must work on all tracks regardless of UI state. */
+static void better_timeline_all_tracks_append(Vector<BetterTimelineVisibleRow> &rows,
+                                               const ListBase *tracks,
+                                               BetterTimelineTrack *parent_group,
+                                               const int indent)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
+       track != nullptr;
+       track = track->next)
+  {
+    rows.append({track, parent_group, indent});
+    if (better_timeline_track_is_group(track)) {
+      better_timeline_all_tracks_append(rows, &track->group_tracks, track, indent + 1);
+    }
+  }
+}
+
+/** Returns ALL tracks (including collapsed group children) in tree order.
+ *  Use this for clip operations — they must work regardless of collapse state. */
+Vector<BetterTimelineVisibleRow> better_timeline_all_tracks_build(
+    const SpaceBetterTimeline *sbetter_timeline)
+{
+  Vector<BetterTimelineVisibleRow> rows;
+  if (sbetter_timeline == nullptr) {
+    return rows;
+  }
+  better_timeline_all_tracks_append(rows, &sbetter_timeline->tracks, nullptr, 0);
+  return rows;
+}
+
+BetterTimelineTrack *better_timeline_visible_row_track_get(
+    SpaceBetterTimeline *sbetter_timeline, const int row_index)
+{
+  if (row_index < 0) {
+    return nullptr;
+  }
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  if (row_index >= int(rows.size())) {
+    return nullptr;
+  }
+  return rows[row_index].track;
+}
+
+const BetterTimelineTrack *better_timeline_visible_row_track_get(
+    const SpaceBetterTimeline *sbetter_timeline, const int row_index)
+{
+  return const_cast<const BetterTimelineTrack *>(
+      better_timeline_visible_row_track_get(const_cast<SpaceBetterTimeline *>(sbetter_timeline),
+                                            row_index));
+}
+
+int better_timeline_visible_row_index_from_track_ptr(
+    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineTrack *track)
+{
+  if (track == nullptr) {
+    return -1;
+  }
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (int i = 0; i < int(rows.size()); i++) {
+    if (rows[i].track == track) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int better_timeline_first_selected_visible_row_index(
+    const SpaceBetterTimeline *sbetter_timeline)
+{
+  if (sbetter_timeline == nullptr) {
+    return -1;
+  }
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (int i = 0; i < int(rows.size()); i++) {
+    if (better_timeline_track_is_selected(rows[i].track)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+void better_timeline_select_only_visible_row(SpaceBetterTimeline *sbetter_timeline,
+                                              const int row_index)
+{
+  better_timeline_clear_selection(sbetter_timeline);
+  BetterTimelineTrack *track = better_timeline_visible_row_track_get(sbetter_timeline, row_index);
+  if (track != nullptr) {
+    better_timeline_track_set_selected(track, true);
+    sbetter_timeline->selected_track_index = row_index;
+  }
+}
+
 void better_timeline_track_set_selected(BetterTimelineTrack *track, const bool selected)
 {
   if (track != nullptr) {
@@ -421,7 +635,9 @@ BetterTimelineTrack *better_timeline_track_create(const char *track_type_idname,
                                                   const int track_name_index)
 {
   auto *track = MEM_new<BetterTimelineTrack>(__func__);
-  SNPRINTF(track->name, "Track%d", std::max(1, track_name_index));
+  const bool is_group_type = (track_type_idname != nullptr &&
+                              STREQ(track_type_idname, "BETTER_TIMELINE_TT_GROUP"));
+  SNPRINTF(track->name, is_group_type ? "Group%d" : "Track%d", std::max(1, track_name_index));
   if (track_type_idname != nullptr) {
     STRNCPY_UTF8(track->track_type, track_type_idname);
   }
@@ -442,6 +658,9 @@ BetterTimelineTrack *better_timeline_track_duplicate(const BetterTimelineTrack *
   track_dst->prev = nullptr;
   BLI_listbase_clear(&track_dst->clips);
   better_timeline_clips_duplicate(&track_dst->clips, &track_src->clips);
+  /* Recursively duplicate child tracks for group tracks. */
+  BLI_listbase_clear(&track_dst->group_tracks);
+  better_timeline_tracks_duplicate(&track_dst->group_tracks, &track_src->group_tracks);
   track_dst->properties = (track_src->properties != nullptr) ? IDP_CopyProperty(track_src->properties) :
                                                                 nullptr;
   better_timeline_track_ensure_type(track_dst);
@@ -661,6 +880,8 @@ void better_timeline_track_free(BetterTimelineTrack *track)
   }
 
   better_timeline_clips_free(&track->clips);
+  /* Recursively free child tracks for group tracks. */
+  better_timeline_tracks_free(&track->group_tracks);
   if (track->properties != nullptr) {
     IDP_FreeProperty(track->properties);
     track->properties = nullptr;
@@ -809,12 +1030,9 @@ bool better_timeline_has_selected_track(const SpaceBetterTimeline *sbetter_timel
   if (sbetter_timeline == nullptr) {
     return false;
   }
-  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    if (better_timeline_track_is_selected(track)) {
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    if (better_timeline_track_is_selected(row.track)) {
       return true;
     }
   }
@@ -827,12 +1045,10 @@ bool better_timeline_has_selected_clip(const SpaceBetterTimeline *sbetter_timeli
     return false;
   }
 
-  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(
+             row.track->clips.first);
          clip != nullptr;
          clip = clip->next)
     {
@@ -850,12 +1066,9 @@ int better_timeline_selected_track_count(const SpaceBetterTimeline *sbetter_time
     return 0;
   }
   int count = 0;
-  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    if (better_timeline_track_is_selected(track)) {
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    if (better_timeline_track_is_selected(row.track)) {
       count++;
     }
   }
@@ -867,11 +1080,10 @@ void better_timeline_clear_selection(SpaceBetterTimeline *sbetter_timeline)
   if (sbetter_timeline == nullptr) {
     return;
   }
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    better_timeline_track_set_selected(track, false);
+  /* Clear selection on ALL tracks including group children. */
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    better_timeline_track_set_selected(row.track, false);
   }
   sbetter_timeline->selected_track_index = -1;
 }
@@ -882,11 +1094,9 @@ void better_timeline_clear_clip_selection(SpaceBetterTimeline *sbetter_timeline)
     return;
   }
 
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(row.track->clips.first);
          clip != nullptr;
          clip = clip->next)
     {
@@ -913,35 +1123,18 @@ void better_timeline_clear_clip_selection_for_track(SpaceBetterTimeline *sbetter
       sbetter_timeline);
 }
 
-void better_timeline_select_only_track(SpaceBetterTimeline *sbetter_timeline, const int track_index)
+void better_timeline_select_only_track(SpaceBetterTimeline *sbetter_timeline,
+                                        const int visible_row_index)
 {
-  better_timeline_clear_selection(sbetter_timeline);
-
-  BetterTimelineTrack *track = better_timeline_track_at_index(sbetter_timeline, track_index);
-  if (track != nullptr) {
-    better_timeline_track_set_selected(track, true);
-    sbetter_timeline->selected_track_index = track_index;
-  }
+  /* Wrapper: delegates to the visible-row selection path so that group children
+   * can be selected by their visible row index. */
+  better_timeline_select_only_visible_row(sbetter_timeline, visible_row_index);
 }
 
 int better_timeline_first_selected_track_index(const SpaceBetterTimeline *sbetter_timeline)
 {
-  if (sbetter_timeline == nullptr) {
-    return -1;
-  }
-
-  int index = 0;
-  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    if (better_timeline_track_is_selected(track)) {
-      return index;
-    }
-    index++;
-  }
-  return -1;
+  /* Returns the visible row index of the first selected track (includes group children). */
+  return better_timeline_first_selected_visible_row_index(sbetter_timeline);
 }
 
 int better_timeline_first_selected_clip_index(const SpaceBetterTimeline *sbetter_timeline)
@@ -951,12 +1144,13 @@ int better_timeline_first_selected_clip_index(const SpaceBetterTimeline *sbetter
   }
 
   int index = 0;
-  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_all_tracks_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    if (better_timeline_track_is_group(row.track)) {
+      continue;
+    }
+    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(
+             row.track->clips.first);
          clip != nullptr;
          clip = clip->next, index++)
     {
@@ -977,17 +1171,17 @@ int better_timeline_clip_global_index_from_ptr(const SpaceBetterTimeline *sbette
   }
 
   int index = 0;
-  for (const BetterTimelineTrack *iter_track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
-       iter_track != nullptr;
-       iter_track = iter_track->next)
-  {
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_all_tracks_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    if (better_timeline_track_is_group(row.track)) {
+      continue;
+    }
     for (const BetterTimelineClip *iter_clip = static_cast<const BetterTimelineClip *>(
-             iter_track->clips.first);
+             row.track->clips.first);
          iter_clip != nullptr;
          iter_clip = iter_clip->next, index++)
     {
-      if (iter_track == track && iter_clip == clip) {
+      if (row.track == track && iter_clip == clip) {
         return index;
       }
     }
@@ -1007,17 +1201,18 @@ BetterTimelineClip *better_timeline_clip_at_global_index(SpaceBetterTimeline *sb
   }
 
   int index = 0;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
-  {
-    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_all_tracks_build(sbetter_timeline);
+  for (const BetterTimelineVisibleRow &row : rows) {
+    if (better_timeline_track_is_group(row.track)) {
+      continue;
+    }
+    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(row.track->clips.first);
          clip != nullptr;
          clip = clip->next, index++)
     {
       if (index == clip_index) {
         if (r_track != nullptr) {
-          *r_track = track;
+          *r_track = row.track;
         }
         return clip;
       }
@@ -1026,14 +1221,11 @@ BetterTimelineClip *better_timeline_clip_at_global_index(SpaceBetterTimeline *sb
   return nullptr;
 }
 
-void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
+/** Recursively read a list of tracks and their children/clips. */
+static void better_timeline_tracks_blend_read_recursive(BlendDataReader *reader, ListBase *tracks)
 {
-  auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
-  sbetter_timeline->runtime = MEM_new<SpaceBetterTimeline_Runtime>(__func__);
-  ed::better_timeline::register_builtin_types();
-
-  BLO_read_struct_list(reader, BetterTimelineTrack, &sbetter_timeline->tracks);
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
+  BLO_read_struct_list(reader, BetterTimelineTrack, tracks);
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
        track != nullptr;
        track = track->next)
   {
@@ -1051,7 +1243,18 @@ void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *s
       IDP_BlendDataRead(reader, &clip->properties);
       better_timeline_clip_ensure_type(track, clip);
     }
+    /* Recursively read group children. */
+    better_timeline_tracks_blend_read_recursive(reader, &track->group_tracks);
   }
+}
+
+void better_timeline_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
+{
+  auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
+  sbetter_timeline->runtime = MEM_new<SpaceBetterTimeline_Runtime>(__func__);
+  ed::better_timeline::register_builtin_types();
+
+  better_timeline_tracks_blend_read_recursive(reader, &sbetter_timeline->tracks);
 
   better_timeline_state_normalize_after_read(sbetter_timeline);
 }
@@ -1066,38 +1269,81 @@ void better_timeline_space_blend_read_after_liblink(BlendLibReader *reader,
    * back into old-address resolution and clear valid bindings on file open. */
 }
 
+static void better_timeline_tracks_id_remap_recursive(const bke::id::IDRemapper &mappings,
+                                                       const ListBase *tracks,
+                                                       bool &changed)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
+       track != nullptr;
+       track = track->next)
+  {
+    changed |= mappings.apply(reinterpret_cast<ID **>(&track->object), ID_REMAP_APPLY_DEFAULT) !=
+               ID_REMAP_RESULT_SOURCE_NOT_MAPPABLE;
+    if (better_timeline_track_is_group(track)) {
+      better_timeline_tracks_id_remap_recursive(mappings, &track->group_tracks, changed);
+    }
+  }
+}
+
 void better_timeline_space_id_remap(ScrArea *area,
                                     SpaceLink *sl,
                                     const bke::id::IDRemapper &mappings)
 {
   auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(sl);
   bool changed = false;
+  better_timeline_tracks_id_remap_recursive(mappings, &sbetter_timeline->tracks, changed);
+  if (changed && area != nullptr) {
+    ED_area_tag_redraw(area);
+  }
+}
 
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
+static void better_timeline_tracks_foreach_id_recursive(const ListBase *tracks,
+                                                         LibraryForeachIDData *data)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
        track != nullptr;
        track = track->next)
   {
-    changed |= mappings.apply(reinterpret_cast<ID **>(&track->object), ID_REMAP_APPLY_DEFAULT) !=
-               ID_REMAP_RESULT_SOURCE_NOT_MAPPABLE;
-  }
-
-  if (changed && area != nullptr) {
-    ED_area_tag_redraw(area);
+    BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, track->object, IDWALK_CB_DIRECT_WEAK_LINK);
+    if (better_timeline_track_is_group(track)) {
+      better_timeline_tracks_foreach_id_recursive(&track->group_tracks, data);
+    }
   }
 }
 
 void better_timeline_space_foreach_id(SpaceLink *space_link, LibraryForeachIDData *data)
 {
   auto *sbetter_timeline = reinterpret_cast<SpaceBetterTimeline *>(space_link);
+  better_timeline_tracks_foreach_id_recursive(&sbetter_timeline->tracks, data);
+}
 
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
-       track != nullptr;
-       track = track->next)
+/** Recursively write a track and all its clips/group_tracks. */
+static void better_timeline_track_blend_write_recursive(BlendWriter *writer,
+                                                        const BetterTimelineTrack *track)
+{
+  if (track == nullptr) {
+    return;
+  }
+  writer->write_struct(track);
+  if (track->properties != nullptr) {
+    IDP_BlendWrite(writer, track->properties);
+  }
+  for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
+       clip != nullptr;
+       clip = clip->next)
   {
-    /* Track-bound scene objects are weak UI references and must be nulled on delete/remap. */
-    BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, track->object, IDWALK_CB_DIRECT_WEAK_LINK);
+    writer->write_struct(clip);
+    if (clip->properties != nullptr) {
+      IDP_BlendWrite(writer, clip->properties);
+    }
+  }
+  /* Recursively write group children. */
+  for (const BetterTimelineTrack *child = static_cast<const BetterTimelineTrack *>(
+           track->group_tracks.first);
+       child != nullptr;
+       child = child->next)
+  {
+    better_timeline_track_blend_write_recursive(writer, child);
   }
 }
 
@@ -1111,20 +1357,7 @@ void better_timeline_space_blend_write(BlendWriter *writer, SpaceLink *sl)
        track != nullptr;
        track = track->next)
   {
-    writer->write_struct(track);
-    if (track->properties != nullptr) {
-      IDP_BlendWrite(writer, track->properties);
-    }
-
-    for (const BetterTimelineClip *clip = static_cast<const BetterTimelineClip *>(track->clips.first);
-         clip != nullptr;
-         clip = clip->next)
-    {
-      writer->write_struct(clip);
-      if (clip->properties != nullptr) {
-        IDP_BlendWrite(writer, clip->properties);
-      }
-    }
+    better_timeline_track_blend_write_recursive(writer, track);
   }
 }
 

@@ -38,6 +38,22 @@ Mouse input in the main region is intentionally ordered:
 This ordering matters. Example: clip resize must be registered before clip drag so edge clicks are
 claimed by resize first and only fall through to drag when no resize handle is under the mouse.
 
+### Custom Scrollbar Priority Gotcha
+
+`better_timeline_is_in_timeline_canvas` returns **true** for the scrollbar column because
+`body_rect.xmax = region->winx`, which includes the custom scrollbar strip. This means operators
+that guard on `!is_in_timeline_canvas` will **not** early-exit when the user clicks the scrollbar.
+
+**Fix**: both `better_timeline_clip_drag_invoke` and `better_timeline_clip_select_invoke` explicitly
+check `better_timeline_is_in_track_scrollbar()` and return `OPERATOR_CANCELLED | OPERATOR_PASS_THROUGH`
+before any clip or box-select logic.
+
+Do **not** use `ui::view2d_mouse_in_scrollers()` here — it checks View2D's built-in scrollbar, which
+is not in use. Better Timeline uses a fully custom scrollbar drawn and hit-tested by
+`better_timeline_track_scrollbar_rect()` / `better_timeline_is_in_track_scrollbar()`.
+
+Any new LMB operator that can fire inside the timeline canvas must include this check.
+
 ---
 
 ## Current Track Shortcuts
@@ -45,11 +61,41 @@ claimed by resize first and only fall through to drag when no resize handle is u
 - `Left Mouse`: select track row
 - `Shift + Left Mouse`: range-select tracks
 - `Cmd + Left Mouse`: toggle track in selection
-- `Left Mouse Drag` on track list: reorder selected tracks
+- `Left Mouse Drag` on track list: reorder selected tracks (or drop into a group — see below)
+- `Left Mouse` on collapse arrow of a group: expand/collapse the group
 - `Shift + A` with no active selection: open the add-track menu
 - `Delete`, `X`: delete selected tracks
 - `M`: mute/unmute selected tracks
 - `L`: lock/unlock selected tracks
+
+### Group Collapse Toggle
+
+The collapse arrow is drawn to the left of the folder icon on every group row. It is detected in
+`better_timeline_track_select_click_invoke` using `better_timeline_is_on_group_collapse_toggle()`
+**before** the mute/lock and selection logic. A click toggles `BETTER_TIMELINE_TRACK_COLLAPSED`.
+
+When collapsed, child tracks are not emitted by `better_timeline_visible_rows_build()`, so all
+row-count, hit-test, and draw operations correctly treat the group as a single row.
+
+### Drag-to-Group
+
+During a track reorder drag (`better_timeline_track_reorder_modal`), the drop behavior depends on
+where the cursor is within a group row:
+
+| Cursor position within a group row | Result               |
+|------------------------------------|----------------------|
+| Top 25% or bottom 25% of row       | Normal insertion line |
+| Center 50% of row                  | Drop-into-group highlight; drop moves selected top-level tracks into `group->group_tracks` |
+
+Detection: `better_timeline_detect_group_drop_target()` in `better_timeline_ops_tracks.cc`.
+
+On release with a group target set, `better_timeline_move_selected_tracks_into_group()` removes
+selected top-level tracks from `sbetter_timeline->tracks` and appends them to `group->group_tracks`.
+The group cannot be dropped into itself (guard: `better_timeline_track_is_selected(hovered)`
+returns true for the group itself → no drop target).
+
+Visual feedback: blue tinted fill + border on the group row, insertion line suppressed
+(`drop_group_target` field on `BetterTimelineTrackDragVisualState`).
 
 `M` and `L` use group-toggle behavior:
 - if any selected track does not already have the state, the key enables it on all selected tracks

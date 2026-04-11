@@ -1077,6 +1077,8 @@ typedef enum eBetterTimelineTrackFlag {
   BETTER_TIMELINE_TRACK_MUTED = (1 << 0),
   /** Track is locked: clips cannot be moved, resized, or deleted. */
   BETTER_TIMELINE_TRACK_LOCKED = (1 << 1),
+  /** Track is a collapsed group: children are hidden (row shows at 1-track height). */
+  BETTER_TIMELINE_TRACK_COLLAPSED = (1 << 2),
 } eBetterTimelineTrackFlag;
 
 struct BetterTimelineTrack {
@@ -1090,6 +1092,9 @@ struct BetterTimelineTrack {
   char _pad0[6] = {};
 
   ListBaseT<BetterTimelineClip> clips = {nullptr, nullptr};
+  /** Child tracks owned by this track when it is a group (track_type == BETTER_TIMELINE_TT_GROUP).
+   *  Empty for non-group tracks. Groups do not hold clips; children hold clips instead. */
+  ListBaseT<BetterTimelineTrack> group_tracks = {nullptr, nullptr};
   IDProperty *properties = nullptr;
   /** Bound scene object for tracks that support object binding (animation, activation/spawn).
    *  Null when no object is assigned. Only meaningful when the track type has `has_object_slot`. */

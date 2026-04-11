@@ -54,7 +54,13 @@ struct BetterTimelineTrackType {
   /** If true, this track type supports binding a scene Object to the track.
    *  The bound object is stored in `BetterTimelineTrack::object`. */
   bool has_object_slot = false;
+  /** If true, this track type is a group container. Groups hold child tracks in
+   *  `BetterTimelineTrack::group_tracks` instead of clips in `BetterTimelineTrack::clips`. */
+  bool is_group = false;
 };
+
+/** Idname for the built-in group track type. */
+constexpr const char *BETTER_TIMELINE_TRACK_TYPE_GROUP_IDNAME = "BETTER_TIMELINE_TT_GROUP";
 
 void register_builtin_types();
 

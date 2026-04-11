@@ -73,19 +73,33 @@ struct BetterTimelineScrollbarDragData {
   int initial_scroll_offset;
 };
 
+/** Describes where a dragged track should be inserted: into which list and at which position. */
+struct BetterTimelineInsertionTarget {
+  /** Non-null when insertion is into a group's child list; null = top-level tracks list. */
+  BetterTimelineTrack *parent_group = nullptr;
+  /** 0-based insertion position within the target list (insert before the track at this index). */
+  int index = 0;
+};
+
 struct BetterTimelineTrackReorderData {
   BetterTimelineTrack *dragged_track;
+  /** The parent group of dragged_track, or null if it is a top-level track. */
+  BetterTimelineTrack *dragged_track_parent = nullptr;
   BetterTimelineTrack *active_track;
-  int current_insertion_index;
+  BetterTimelineInsertionTarget current_insertion_target;
   int last_mouse_y;
   wmTimer *autoscroll_timer;
+  /** Non-null when dragging over the center of a group row — tracks will be moved into it. */
+  BetterTimelineTrack *drop_group_target = nullptr;
 };
 
 struct BetterTimelineTrackDragVisualState {
   const ARegion *region;
   const BetterTimelineTrack *dragged_track;
-  int insertion_index;
+  float insertion_y;
   bool active;
+  /** Non-null during a drag-to-group hover — draw highlight on this group row. */
+  const BetterTimelineTrack *drop_group_target = nullptr;
 };
 
 struct BetterTimelineClipDragVisualState {
@@ -212,6 +226,18 @@ enum eBetterTimelineTrackScrollDirection {
   BETTER_TIMELINE_TRACK_SCROLL_DOWN = 1,
 };
 
+/** A single visible row in the track list pane.
+ *  Built by `better_timeline_visible_rows_build()` which recursively expands group children.
+ *  Row order matches the visual top-to-bottom order on screen. */
+struct BetterTimelineVisibleRow {
+  /** The track displayed on this row. */
+  BetterTimelineTrack *track;
+  /** The group track that directly owns this track, or nullptr if it is a top-level track. */
+  BetterTimelineTrack *parent_group;
+  /** Visual indent level: 0 = top-level, 1 = child of a group, 2 = nested group child, etc. */
+  int indent;
+};
+
 int better_timeline_panel_width_clamp(const ARegion *region, int panel_width);
 int better_timeline_left_panel_width(const ARegion *region,
                                      const SpaceBetterTimeline *sbetter_timeline);
@@ -268,22 +294,31 @@ bool better_timeline_row_is_visible(const ARegion *region,
 int better_timeline_track_from_region_y(const ARegion *region,
                                         const SpaceBetterTimeline *sbetter_timeline,
                                         int region_y);
-int better_timeline_track_insertion_index_from_region_y(const ARegion *region,
-                                                        const SpaceBetterTimeline *sbetter_timeline,
-                                                        int region_y);
-bool better_timeline_reorder_selected_tracks_would_change(
-    const SpaceBetterTimeline *sbetter_timeline, int insertion_index);
-bool better_timeline_reorder_selected_tracks_to_insertion_index(
-    SpaceBetterTimeline *sbetter_timeline, int insertion_index);
+/** Group-aware insertion target from mouse Y. Handles in-group insertion automatically. */
+BetterTimelineInsertionTarget better_timeline_insertion_target_from_region_y(
+    const ARegion *region,
+    const SpaceBetterTimeline *sbetter_timeline,
+    int region_y);
+/** Pixel Y for the insertion line corresponding to a given target. */
+float better_timeline_insertion_target_y(const ARegion *region,
+                                         const SpaceBetterTimeline *sbetter_timeline,
+                                         const BetterTimelineInsertionTarget &target);
+/** Returns true if applying target would actually change the track order/placement. */
+bool better_timeline_reorder_selected_tracks_would_change_target(
+    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineInsertionTarget &target);
+/** Reorders/moves selected tracks to the insertion target. Works across group boundaries. */
+bool better_timeline_reorder_selected_tracks_to_target(SpaceBetterTimeline *sbetter_timeline,
+                                                        const BetterTimelineInsertionTarget &target);
+/** Move all selected top-level tracks into `group` as children. Returns true if anything changed. */
+bool better_timeline_move_selected_tracks_into_group(SpaceBetterTimeline *sbetter_timeline,
+                                                      BetterTimelineTrack *group);
 bool better_timeline_track_reorder_autoscroll_apply(
     const ARegion *region, SpaceBetterTimeline *sbetter_timeline, int region_y);
-float better_timeline_track_insertion_y(const ARegion *region,
-                                        const SpaceBetterTimeline *sbetter_timeline,
-                                        int insertion_index);
 void better_timeline_track_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
                                                     const ARegion *region,
                                                     const BetterTimelineTrack *dragged_track,
-                                                    int insertion_index);
+                                                    float insertion_y,
+                                                    const BetterTimelineTrack *drop_group_target = nullptr);
 void better_timeline_track_drag_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
 void better_timeline_clip_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
                                                    const ARegion *region,
@@ -422,6 +457,60 @@ void better_timeline_space_foreach_id(SpaceLink *space_link, LibraryForeachIDDat
 
 bool better_timeline_track_is_muted(const BetterTimelineTrack *track);
 bool better_timeline_track_is_locked(const BetterTimelineTrack *track);
+bool better_timeline_track_is_group(const BetterTimelineTrack *track);
+bool better_timeline_track_is_collapsed(const BetterTimelineTrack *track);
+/** Returns true if `track` is anywhere inside `ancestor_candidate`'s group_tracks hierarchy. */
+bool better_timeline_track_is_descendant_of(const BetterTimelineTrack *track,
+                                             const BetterTimelineTrack *ancestor_candidate);
+/** Returns true if moving any selected track into `target_group` would create a cycle
+ *  (i.e., target_group is a descendant of a selected track, or is selected itself). */
+bool better_timeline_would_create_group_cycle(const SpaceBetterTimeline *sbetter_timeline,
+                                               const BetterTimelineTrack *target_group);
+
+/** Build the ordered flat list of visible rows from the track hierarchy.
+ *  Collapsed groups suppress their children. Recursively handles nested groups. */
+Vector<BetterTimelineVisibleRow> better_timeline_visible_rows_build(
+    const SpaceBetterTimeline *sbetter_timeline);
+
+/** Returns ALL tracks (including collapsed group children) in tree order.
+ *  Use this for clip operations — they must work regardless of collapse state. */
+Vector<BetterTimelineVisibleRow> better_timeline_all_tracks_build(
+    const SpaceBetterTimeline *sbetter_timeline);
+
+/** Total number of currently visible rows (takes collapse state into account). */
+int better_timeline_visible_row_count(const SpaceBetterTimeline *sbetter_timeline);
+
+/** Track at visible row index, or nullptr if out of range. */
+BetterTimelineTrack *better_timeline_visible_row_track_get(
+    SpaceBetterTimeline *sbetter_timeline, int row_index);
+const BetterTimelineTrack *better_timeline_visible_row_track_get(
+    const SpaceBetterTimeline *sbetter_timeline, int row_index);
+
+/** Visible row index for a given track pointer (searches all hierarchy levels).
+ *  Returns -1 if the track is not currently visible (inside collapsed group, or not found). */
+int better_timeline_visible_row_index_from_track_ptr(
+    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineTrack *track);
+
+/** Visible row index of the first selected track, or -1. */
+int better_timeline_first_selected_visible_row_index(
+    const SpaceBetterTimeline *sbetter_timeline);
+
+/** Select only the track at the given visible row index; deselect everything else. */
+void better_timeline_select_only_visible_row(SpaceBetterTimeline *sbetter_timeline,
+                                              int row_index);
+
+/** Collapse toggle rect (the triangle arrow) for a group row in the track list pane. */
+rcti better_timeline_group_collapse_toggle_rect(const ARegion *region,
+                                                const SpaceBetterTimeline *sbetter_timeline,
+                                                int row_index);
+
+/** Returns true if the click at (region_x, region_y) is on a group collapse toggle.
+ *  Sets *r_group_row_index to the visible row of the group (if true). */
+bool better_timeline_is_on_group_collapse_toggle(const ARegion *region,
+                                                  const SpaceBetterTimeline *sbetter_timeline,
+                                                  int region_x,
+                                                  int region_y,
+                                                  int *r_group_row_index);
 rcti better_timeline_track_object_slot_rect(const ARegion *region,
                                              const SpaceBetterTimeline *sbetter_timeline,
                                              int row_index);

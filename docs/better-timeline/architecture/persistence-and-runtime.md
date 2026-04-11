@@ -113,11 +113,29 @@ Required behavior:
 
 - duplicate tracks one-by-one
 - duplicate each track's clip list
+- duplicate `track->group_tracks` recursively (for group tracks)
 - duplicate `track->properties`
 - duplicate `clip->properties`
 - re-run type normalization on restored/duplicated data
 
 This is already handled in `better_timeline_data.cc`; preserve that pattern.
+
+### Blend I/O for group children
+
+`group_tracks` is a nested `ListBase` and is **not** visited automatically by the standard
+`blend_write` / `blend_read` machinery — it must be written and read explicitly. The pattern
+used is:
+
+```cpp
+// Write:  better_timeline_track_blend_write_recursive(writer, track)
+//         → writes track, then iterates group_tracks and recurses
+
+// Read:   better_timeline_tracks_blend_read_recursive(reader, &list)
+//         → reads each track in the list, then recurses into group_tracks
+```
+
+Every place that walks `sbetter_timeline->tracks` for blend purposes (write, read, id_remap,
+foreach_id, after_liblink) must use the recursive helpers to cover group children.
 
 ## Post-Read Normalization
 
@@ -154,6 +172,27 @@ Rules:
 - helper/UI paths that are not real Better Timeline edits must not leave custom undo pending
 - if you add new persistent editor state, make sure it is included in the undo snapshot/restore path
 - if you add new transient runtime state, make sure undo restore clears or rebuilds it appropriately
+
+### Half-open step crash pattern
+
+`better_timeline_undo_push_init` calls `BKE_undosys_step_push_init`, which registers a pending
+step. Blender's undo system finalizes ALL pending `push_init` steps the next time `ED_undo_push`
+is called — from ANY operator in ANY area. If the step was started from inside a non-`OPTYPE_UNDO`
+operator (e.g. `BETTER_TIMELINE_OT_track_select`), and the user then acts in the 3D viewport
+(which calls `ED_undo_push`), `better_timeline_undosys_step_encode` is invoked with the 3D
+viewport context. `CTX_wm_space_data(C)` returns `SpaceView3D*`, which is cast to
+`SpaceBetterTimeline*` — accessing `->tracks` reads garbage → **segfault**.
+
+**Two safeguards in place:**
+
+1. `better_timeline_undosys_step_encode` checks `area->spacetype != SPACE_BETTER_TIMELINE` and
+   returns false if the context is wrong. This is the crash-prevention net.
+
+2. Any Better Timeline state change triggered from inside a non-`OPTYPE_UNDO` operator must be
+   delegated to a proper `OPTYPE_UNDO` operator via `WM_operator_name_call_ptr`. Example:
+   the group collapse arrow is detected in `track_select_click_invoke` but invokes
+   `BETTER_TIMELINE_OT_group_collapse_toggle` (which has `OPTYPE_UNDO`) so its pending step
+   is always finalized with the correct context.
 
 ## Clipboard Note
 

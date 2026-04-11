@@ -69,6 +69,21 @@ Status labels have two Better Timeline-specific constraints:
 
 If you add a new visual layer, decide where in this order it belongs and insert it there. Don't append to the end blindly — icons must always sit above backgrounds.
 
+### Icon Pass Scissor Rule
+
+The icon pass (step 7) **must** be wrapped in `better_timeline_clip_begin / better_timeline_clip_end`
+using `content_rect = {0, region->winx, 0, content_top}`. Without this scissor, icons bleed outside
+the content area when tracks are scrolled — the icons for the first/last visible row appear above or
+below the track panel boundary.
+
+```cpp
+better_timeline_clip_begin(region, content_rect, &content_clip_state);
+GPU_blend(GPU_BLEND_ALPHA);
+// ... icon draw loop ...
+GPU_blend(GPU_BLEND_NONE);
+better_timeline_clip_end(content_clip_state);
+```
+
 ---
 
 ## GPU Immediate Mode Pattern
@@ -213,6 +228,30 @@ This desaturates to perceptual grey. Use the same formula for any future "inacti
 Current caveat:
 
 - clip styling is not fully registry-driven yet; some color decisions still key off `clip_type` idname in draw code. If styling becomes type-extensible, move that responsibility toward the registry/model layer instead of adding more hardcoded string checks here.
+
+---
+
+## Collapsed Group Ghost Clips
+
+When a group track is collapsed, all clips from all descendant tracks are drawn as non-interactive
+gray rectangles ("ghost clips") in the group's single row. This gives a visual summary of what is
+inside without expanding.
+
+Implementation in `better_timeline_draw_clips()`:
+
+1. `better_timeline_collect_group_clips()` — recursive helper that walks `group->group_tracks`,
+   skipping nested group headers, and collects pointers to all leaf clips.
+2. The collected `(start_frame, end_frame)` intervals are sorted by start and **merged** so that
+   overlapping or adjacent clips (from different tracks or blend regions on the same track) appear
+   as a single rectangle rather than stacking.
+3. Each merged interval is drawn as a filled gray rect (`0.55, 0.55, 0.55, 0.50`) with a subtle
+   outline (`0.70, 0.70, 0.70, 0.35`). Ghost clips are entirely visual — no hit-testing.
+
+**Why merge?** Without merging, two tracks whose clips overlap in time produce visually stacked
+rectangles of double opacity, which looks like one wide clip with uneven brightness. Merging gives
+one clean solid rect per time region.
+
+**Expanded group**: skip entirely — children will draw their own clips in their own rows.
 
 ---
 
