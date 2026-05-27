@@ -17,6 +17,7 @@ struct BetterTimelineTrack {
   ListBaseT<BetterTimelineClip> clips;
   ListBaseT<BetterTimelineTrack> group_tracks; // child tracks when this track is a group
   IDProperty *properties; // type-specific extra data — extend here, not in the struct
+  Object *object;          // weak object-slot binding for track types that support it
 };
 ```
 
@@ -26,7 +27,8 @@ Track ownership rules:
 
 - `SpaceBetterTimeline::tracks` is the authoritative **top-level** track list.
 - `BetterTimelineTrack::clips` is the authoritative per-track clip list.
-- `BetterTimelineTrack::group_tracks` holds child tracks when `track_type == BETTER_TIMELINE_TT_GROUP`. Currently one level of nesting only (children cannot themselves be groups).
+- `BetterTimelineTrack::group_tracks` holds child tracks when `track_type == BETTER_TIMELINE_TT_GROUP`. The hierarchy is recursive; nested groups are valid as long as reorder/drop logic preserves the cycle guards.
+- `BetterTimelineTrack::object` is the common weak object-slot binding used by track types that set `has_object_slot`. It is not a type-specific payload and must participate in ID walking/remap.
 - Do not redesign clip storage as a detached global clip container.
 
 ### `flag` bits
@@ -143,13 +145,17 @@ to turn it back into a track pointer — use `better_timeline_visible_row_track_
 
 ### Flat-list vs visible-row split
 
-Some operations still work on the **flat top-level list** (`sbetter_timeline->tracks`):
+Some helpers still work on the **flat top-level list** (`sbetter_timeline->tracks`):
 
-- track reorder drag — moves tracks within the flat list
-- `better_timeline_track_index_from_ptr()` and `better_timeline_track_count()` — flat-list ops
+- `better_timeline_track_index_from_ptr()` and `better_timeline_track_count()` — flat-list helpers only
+- fallback insertion when there is no active parent group
+
+Group-aware reorder/paste/delete/copy paths must resolve the owning list explicitly: top-level
+tracks live in `SpaceBetterTimeline::tracks`, child tracks live in their parent's `group_tracks`.
 
 Code paths that drive UI (Y-to-row mapping, icon/name drawing, mute/lock hit-test, selection,
-clip drawing) must use the visible-row helpers. Check carefully when adding new operators.
+clip drawing) must use the visible-row helpers. Code paths that affect clips or hidden children
+must use recursive all-track traversal where appropriate. Check carefully when adding new operators.
 
 ---
 

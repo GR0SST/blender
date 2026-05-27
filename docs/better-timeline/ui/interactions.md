@@ -85,14 +85,16 @@ where the cursor is within a group row:
 | Cursor position within a group row | Result               |
 |------------------------------------|----------------------|
 | Top 25% or bottom 25% of row       | Normal insertion line |
-| Center 50% of row                  | Drop-into-group highlight; drop moves selected top-level tracks into `group->group_tracks` |
+| Center 50% of row                  | Drop-into-group highlight; drop moves effectively selected tracks into `group->group_tracks` |
 
 Detection: `better_timeline_detect_group_drop_target()` in `better_timeline_ops_tracks.cc`.
 
 On release with a group target set, `better_timeline_move_selected_tracks_into_group()` removes
-selected top-level tracks from `sbetter_timeline->tracks` and appends them to `group->group_tracks`.
-The group cannot be dropped into itself (guard: `better_timeline_track_is_selected(hovered)`
-returns true for the group itself → no drop target).
+selected tracks from their current owner list (`SpaceBetterTimeline::tracks` or a parent
+`group_tracks`) and appends them to `group->group_tracks`. Descendants of a selected group are
+skipped because the selected ancestor carries its subtree. The group cannot be dropped into itself
+(guard: `better_timeline_track_is_selected(hovered)` returns true for the group itself → no drop
+target).
 
 Visual feedback: blue tinted fill + border on the group row, insertion line suppressed
 (`drop_group_target` field on `BetterTimelineTrackDragVisualState`).

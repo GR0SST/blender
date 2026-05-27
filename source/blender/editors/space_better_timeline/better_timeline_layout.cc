@@ -33,7 +33,8 @@ int better_timeline_panel_width_clamp(const ARegion *region, const int panel_wid
   const int hard_max_width = std::max(1, region->winx - 1);
   const int min_width = std::min(int(BETTER_TIMELINE_PANEL_MIN_WIDTH * UI_SCALE_FAC),
                                  hard_max_width);
-  const int max_width = std::clamp(region->winx - int(BETTER_TIMELINE_TIMELINE_MIN_WIDTH * UI_SCALE_FAC),
+  const int max_width = std::clamp(region->winx -
+                                       int(BETTER_TIMELINE_TIMELINE_MIN_WIDTH * UI_SCALE_FAC),
                                    min_width,
                                    hard_max_width);
   return std::clamp(panel_width, min_width, max_width);
@@ -41,8 +42,8 @@ int better_timeline_panel_width_clamp(const ARegion *region, const int panel_wid
 
 static int better_timeline_default_left_panel_width(const ARegion *region)
 {
-  return better_timeline_panel_width_clamp(region,
-                                           int(BETTER_TIMELINE_PANEL_DEFAULT_WIDTH * UI_SCALE_FAC));
+  return better_timeline_panel_width_clamp(
+      region, int(BETTER_TIMELINE_PANEL_DEFAULT_WIDTH * UI_SCALE_FAC));
 }
 
 int better_timeline_left_panel_width(const ARegion *region,
@@ -50,7 +51,7 @@ int better_timeline_left_panel_width(const ARegion *region,
 {
   const int stored_width = (sbetter_timeline != nullptr) ? sbetter_timeline->track_panel_width : 0;
   const int panel_width = (stored_width > 0) ? stored_width :
-                                             better_timeline_default_left_panel_width(region);
+                                               better_timeline_default_left_panel_width(region);
   return better_timeline_panel_width_clamp(region, panel_width);
 }
 
@@ -84,8 +85,7 @@ static void better_timeline_view2d_apply_mask(ARegion *region,
   v2d->mask.ymax = std::max(v2d->mask.ymin, better_timeline_content_height(region) - 1);
 }
 
-rcti better_timeline_body_rect(const ARegion *region,
-                               const SpaceBetterTimeline *sbetter_timeline)
+rcti better_timeline_body_rect(const ARegion *region, const SpaceBetterTimeline *sbetter_timeline)
 {
   rcti rect{};
   rect.xmin = better_timeline_left_panel_width(region, sbetter_timeline);
@@ -95,8 +95,7 @@ rcti better_timeline_body_rect(const ARegion *region,
   return rect;
 }
 
-rcti better_timeline_scrub_rect(const ARegion *region,
-                                const SpaceBetterTimeline *sbetter_timeline)
+rcti better_timeline_scrub_rect(const ARegion *region, const SpaceBetterTimeline *sbetter_timeline)
 {
   rcti rect = better_timeline_body_rect(region, sbetter_timeline);
   rect.ymin = rect.ymax;
@@ -237,10 +236,10 @@ rcti better_timeline_track_scrollbar_thumb_rect(const ARegion *region,
       int(BETTER_TIMELINE_SCROLLBAR_MIN_THUMB_HEIGHT * UI_SCALE_FAC),
       scrollbar_height);
   const int travel = std::max(0, scrollbar_height - thumb_height);
-  const float scroll_ratio = (scroll_max > 0) ?
-                                 float(better_timeline_track_scroll_offset(region, sbetter_timeline)) /
-                                     float(scroll_max) :
-                                 0.0f;
+  const float scroll_ratio = (scroll_max > 0) ? float(better_timeline_track_scroll_offset(
+                                                    region, sbetter_timeline)) /
+                                                    float(scroll_max) :
+                                                0.0f;
   const int thumb_top_offset = int(std::round(scroll_ratio * travel));
 
   rcti rect{};
@@ -319,9 +318,8 @@ int better_timeline_track_from_region_y(const ARegion *region,
   return (row_index >= 0 && row_index < row_count) ? row_index : -1;
 }
 
-int better_timeline_track_insertion_index_from_region_y(const ARegion *region,
-                                                        const SpaceBetterTimeline *sbetter_timeline,
-                                                        const int region_y)
+int better_timeline_track_insertion_index_from_region_y(
+    const ARegion *region, const SpaceBetterTimeline *sbetter_timeline, const int region_y)
 {
   /* Returns a flat top-level insertion index for reorder-drag purposes.
    * Maps visible-row Y coordinates back to a flat track list position. */
@@ -346,7 +344,8 @@ int better_timeline_track_insertion_index_from_region_y(const ARegion *region,
   }
 
   /* Find the top-level track whose visible row span contains this row. */
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   if (visible_row >= int(rows.size())) {
     return flat_count;
   }
@@ -359,15 +358,16 @@ int better_timeline_track_insertion_index_from_region_y(const ARegion *region,
 
   /* Map the top-level visible row to a flat track index. */
   int flat_index = 0;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
+  for (BetterTimelineTrack *track =
+           static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
        track != nullptr;
        track = track->next, flat_index++)
   {
     if (rows[top_level_row].track == track) {
       /* Use the Y centre of the hover row to decide insert before or after. */
       const float row_y_center = (better_timeline_row_ymin(region, sbetter_timeline, visible_row) +
-                                  better_timeline_row_ymax(region, sbetter_timeline, visible_row)) *
+                                  better_timeline_row_ymax(
+                                      region, sbetter_timeline, visible_row)) *
                                  0.5f;
       return (float(region_y) >= row_y_center) ? flat_index : flat_index + 1;
     }
@@ -402,7 +402,8 @@ static bool better_timeline_reorder_track_to_index(SpaceBetterTimeline *sbetter_
     return true;
   }
 
-  BetterTimelineTrack *insert_after = better_timeline_track_at_index(sbetter_timeline, target_index);
+  BetterTimelineTrack *insert_after = better_timeline_track_at_index(sbetter_timeline,
+                                                                     target_index);
   if (insert_after == nullptr || insert_after == track) {
     return false;
   }
@@ -431,8 +432,8 @@ bool better_timeline_reorder_selected_tracks_would_change(
 
   int selected_before_insertion = 0;
   int index = 0;
-  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
+  for (const BetterTimelineTrack *track =
+           static_cast<const BetterTimelineTrack *>(sbetter_timeline->tracks.first);
        track != nullptr;
        track = track->next, index++)
   {
@@ -484,22 +485,23 @@ bool better_timeline_reorder_selected_tracks_to_insertion_index(
       return false;
     }
 
-    const int current_index = better_timeline_track_index_from_ptr(sbetter_timeline, selected_track);
+    const int current_index = better_timeline_track_index_from_ptr(sbetter_timeline,
+                                                                   selected_track);
     if (current_index < 0) {
       return false;
     }
 
-    const int target_index = std::clamp(
-        (insertion_index <= current_index) ? insertion_index : insertion_index - 1,
-        0,
-        std::max(0, track_count - 1));
+    const int target_index = std::clamp((insertion_index <= current_index) ? insertion_index :
+                                                                             insertion_index - 1,
+                                        0,
+                                        std::max(0, track_count - 1));
     return better_timeline_reorder_track_to_index(sbetter_timeline, selected_track, target_index);
   }
 
   int selected_before_insertion = 0;
   int index = 0;
-  for (const BetterTimelineTrack *track = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
+  for (const BetterTimelineTrack *track =
+           static_cast<const BetterTimelineTrack *>(sbetter_timeline->tracks.first);
        track != nullptr;
        track = track->next, index++)
   {
@@ -548,12 +550,11 @@ bool better_timeline_reorder_selected_tracks_to_insertion_index(
 }
 
 BetterTimelineInsertionTarget better_timeline_insertion_target_from_region_y(
-    const ARegion *region,
-    const SpaceBetterTimeline *sbetter_timeline,
-    const int region_y)
+    const ARegion *region, const SpaceBetterTimeline *sbetter_timeline, const int region_y)
 {
   BetterTimelineInsertionTarget result;
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   const int row_count = int(rows.size());
 
   if (row_count == 0) {
@@ -579,10 +580,8 @@ BetterTimelineInsertionTarget better_timeline_insertion_target_from_region_y(
       below_row_idx = row_count;
     }
     else {
-      const float row_ymin = float(
-          better_timeline_row_ymin(region, sbetter_timeline, hovered));
-      const float row_ymax = float(
-          better_timeline_row_ymax(region, sbetter_timeline, hovered));
+      const float row_ymin = float(better_timeline_row_ymin(region, sbetter_timeline, hovered));
+      const float row_ymax = float(better_timeline_row_ymax(region, sbetter_timeline, hovered));
       const bool insert_before = (float(region_y) >= (row_ymin + row_ymax) * 0.5f);
       if (insert_before) {
         above_row_idx = hovered - 1;
@@ -596,15 +595,14 @@ BetterTimelineInsertionTarget better_timeline_insertion_target_from_region_y(
   }
 
   const BetterTimelineVisibleRow *above_row = (above_row_idx >= 0 && above_row_idx < row_count) ?
-                                               &rows[above_row_idx] :
-                                               nullptr;
+                                                  &rows[above_row_idx] :
+                                                  nullptr;
   const BetterTimelineVisibleRow *below_row = (below_row_idx >= 0 && below_row_idx < row_count) ?
-                                               &rows[below_row_idx] :
-                                               nullptr;
+                                                  &rows[below_row_idx] :
+                                                  nullptr;
 
   /* Case 1: both adjacent rows are children of the same group → insert inside that group. */
-  if (above_row != nullptr && below_row != nullptr &&
-      above_row->parent_group != nullptr &&
+  if (above_row != nullptr && below_row != nullptr && above_row->parent_group != nullptr &&
       above_row->parent_group == below_row->parent_group)
   {
     BetterTimelineTrack *group = above_row->parent_group;
@@ -612,8 +610,8 @@ BetterTimelineInsertionTarget better_timeline_insertion_target_from_region_y(
      * to top-level insertion instead. */
     if (!better_timeline_would_create_group_cycle(sbetter_timeline, group)) {
       int idx = 0;
-      for (const BetterTimelineTrack *t = static_cast<const BetterTimelineTrack *>(
-               group->group_tracks.first);
+      for (const BetterTimelineTrack *t =
+               static_cast<const BetterTimelineTrack *>(group->group_tracks.first);
            t != nullptr;
            t = t->next, idx++)
       {
@@ -656,8 +654,8 @@ BetterTimelineInsertionTarget better_timeline_insertion_target_from_region_y(
   BetterTimelineTrack *top_track = rows[top_row_idx].track;
 
   int flat_index = 0;
-  for (const BetterTimelineTrack *t = static_cast<const BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
+  for (const BetterTimelineTrack *t =
+           static_cast<const BetterTimelineTrack *>(sbetter_timeline->tracks.first);
        t != nullptr;
        t = t->next, flat_index++)
   {
@@ -677,16 +675,17 @@ float better_timeline_insertion_target_y(const ARegion *region,
                                          const SpaceBetterTimeline *sbetter_timeline,
                                          const BetterTimelineInsertionTarget &target)
 {
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   const int row_count = int(rows.size());
 
   if (row_count == 0) {
     return float(better_timeline_content_height(region));
   }
 
-  const ListBase *parent_list = target.parent_group ?
-      static_cast<const ListBase *>(&target.parent_group->group_tracks) :
-      &sbetter_timeline->tracks;
+  const ListBase *parent_list = target.parent_group ? static_cast<const ListBase *>(
+                                                          &target.parent_group->group_tracks) :
+                                                      &sbetter_timeline->tracks;
 
   /* Find the track at target.index in parent_list. */
   BetterTimelineTrack *track_at = nullptr;
@@ -708,8 +707,8 @@ float better_timeline_insertion_target_y(const ARegion *region,
      * through visible rows to find the very last row that belongs to its subtree.
      * This correctly accounts for expanded group children below the last top-level entry. */
     const BetterTimelineTrack *last_in_list = nullptr;
-    for (const BetterTimelineTrack *t = static_cast<const BetterTimelineTrack *>(
-             parent_list->first);
+    for (const BetterTimelineTrack *t =
+             static_cast<const BetterTimelineTrack *>(parent_list->first);
          t != nullptr;
          t = t->next)
     {
@@ -740,21 +739,21 @@ float better_timeline_insertion_target_y(const ARegion *region,
 }
 
 bool better_timeline_reorder_selected_tracks_would_change_target(
-    const SpaceBetterTimeline *sbetter_timeline,
-    const BetterTimelineInsertionTarget &target)
+    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineInsertionTarget &target)
 {
-  const ListBase *target_list = target.parent_group ?
-      static_cast<const ListBase *>(&target.parent_group->group_tracks) :
-      &sbetter_timeline->tracks;
+  const ListBase *target_list = target.parent_group ? static_cast<const ListBase *>(
+                                                          &target.parent_group->group_tracks) :
+                                                      &sbetter_timeline->tracks;
 
   /* Collect effective selection (skip children of selected groups). */
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   Vector<const BetterTimelineTrack *> selected;
   for (const BetterTimelineVisibleRow &row : rows) {
     if (!better_timeline_track_is_selected(row.track)) {
       continue;
     }
-    if (row.parent_group != nullptr && better_timeline_track_is_selected(row.parent_group)) {
+    if (better_timeline_track_has_selected_ancestor(sbetter_timeline, row.track)) {
       continue;
     }
     selected.append(row.track);
@@ -766,8 +765,8 @@ bool better_timeline_reorder_selected_tracks_would_change_target(
   if (selected.size() == 1) {
     const BetterTimelineTrack *sel = selected[0];
     int cur_idx = 0;
-    for (const BetterTimelineTrack *t = static_cast<const BetterTimelineTrack *>(
-             target_list->first);
+    for (const BetterTimelineTrack *t =
+             static_cast<const BetterTimelineTrack *>(target_list->first);
          t != nullptr;
          t = t->next, cur_idx++)
     {
@@ -781,10 +780,11 @@ bool better_timeline_reorder_selected_tracks_would_change_target(
   return true; /* Multi-selection: conservatively assume change. */
 }
 
-bool better_timeline_reorder_selected_tracks_to_target(
-    SpaceBetterTimeline *sbetter_timeline, const BetterTimelineInsertionTarget &target)
+bool better_timeline_reorder_selected_tracks_to_target(SpaceBetterTimeline *sbetter_timeline,
+                                                       const BetterTimelineInsertionTarget &target)
 {
-  /* Cycle guard: refuse if moving selected tracks into target.parent_group would create a cycle. */
+  /* Cycle guard: refuse if moving selected tracks into target.parent_group would create a cycle.
+   */
   if (target.parent_group != nullptr &&
       better_timeline_would_create_group_cycle(sbetter_timeline, target.parent_group))
   {
@@ -799,17 +799,17 @@ bool better_timeline_reorder_selected_tracks_to_target(
   };
   Vector<MoveInfo> to_move;
   {
-    const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+    const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+        sbetter_timeline);
     for (const BetterTimelineVisibleRow &row : rows) {
       if (!better_timeline_track_is_selected(row.track)) {
         continue;
       }
-      if (row.parent_group != nullptr && better_timeline_track_is_selected(row.parent_group)) {
+      if (better_timeline_track_has_selected_ancestor(sbetter_timeline, row.track)) {
         continue;
       }
-      ListBase *src = row.parent_group ?
-          static_cast<ListBase *>(&row.parent_group->group_tracks) :
-          &sbetter_timeline->tracks;
+      ListBase *src = row.parent_group ? static_cast<ListBase *>(&row.parent_group->group_tracks) :
+                                         &sbetter_timeline->tracks;
       to_move.append({row.track, src});
     }
   }
@@ -818,8 +818,8 @@ bool better_timeline_reorder_selected_tracks_to_target(
   }
 
   ListBase *target_list = target.parent_group ?
-      static_cast<ListBase *>(&target.parent_group->group_tracks) :
-      &sbetter_timeline->tracks;
+                              static_cast<ListBase *>(&target.parent_group->group_tracks) :
+                              &sbetter_timeline->tracks;
 
   /* Find anchor: last non-moved track in target_list strictly before target.index.
    * Capture before any removal so pointer remains valid. */
@@ -870,7 +870,7 @@ bool better_timeline_reorder_selected_tracks_to_target(
 }
 
 bool better_timeline_move_selected_tracks_into_group(SpaceBetterTimeline *sbetter_timeline,
-                                                      BetterTimelineTrack *group)
+                                                     BetterTimelineTrack *group)
 {
   if (sbetter_timeline == nullptr || group == nullptr) {
     return false;
@@ -896,12 +896,11 @@ bool better_timeline_move_selected_tracks_into_group(SpaceBetterTimeline *sbette
       if (row.track == group) {
         continue;
       }
-      if (row.parent_group != nullptr && better_timeline_track_is_selected(row.parent_group)) {
+      if (better_timeline_track_has_selected_ancestor(sbetter_timeline, row.track)) {
         continue; /* Parent group moves this child along. */
       }
-      ListBase *src = row.parent_group ?
-          static_cast<ListBase *>(&row.parent_group->group_tracks) :
-          &sbetter_timeline->tracks;
+      ListBase *src = row.parent_group ? static_cast<ListBase *>(&row.parent_group->group_tracks) :
+                                         &sbetter_timeline->tracks;
       to_move.append({row.track, src});
     }
   }
@@ -913,9 +912,8 @@ bool better_timeline_move_selected_tracks_into_group(SpaceBetterTimeline *sbette
   return !to_move.is_empty();
 }
 
-static int better_timeline_track_reorder_autoscroll_step(const ARegion *region,
-                                                         const SpaceBetterTimeline *sbetter_timeline,
-                                                         const int region_y)
+static int better_timeline_track_reorder_autoscroll_step(
+    const ARegion *region, const SpaceBetterTimeline *sbetter_timeline, const int region_y)
 {
   const int scroll_max = better_timeline_track_scroll_max(region, sbetter_timeline);
   if (scroll_max == 0) {
@@ -977,10 +975,11 @@ float better_timeline_track_insertion_y(const ARegion *region,
   }
 
   /* Walk visible rows to find the first row that belongs to flat track at clamped index. */
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   int flat_index = 0;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(
-           sbetter_timeline->tracks.first);
+  for (BetterTimelineTrack *track =
+           static_cast<BetterTimelineTrack *>(sbetter_timeline->tracks.first);
        track != nullptr;
        track = track->next, flat_index++)
   {
@@ -993,8 +992,9 @@ float better_timeline_track_insertion_y(const ARegion *region,
       break;
     }
   }
-  return (visible_count > 0) ? better_timeline_row_ymin(region, sbetter_timeline, visible_count - 1) :
-                                0.0f;
+  return (visible_count > 0) ?
+             better_timeline_row_ymin(region, sbetter_timeline, visible_count - 1) :
+             0.0f;
 }
 
 void better_timeline_view_sync(ARegion *region,
@@ -1007,8 +1007,8 @@ void better_timeline_view_sync(ARegion *region,
   const float frame_end = float(scene->r.efra);
   const float frame_range = std::max(1.0f, frame_end - frame_start);
   const float frame_padding = std::max(18.0f, frame_range * 0.14f);
-  const float total_rows = float(std::max(
-      better_timeline_row_count(region), better_timeline_visible_row_count(sbetter_timeline)));
+  const float total_rows = float(std::max(better_timeline_row_count(region),
+                                          better_timeline_visible_row_count(sbetter_timeline)));
   const bool has_valid_cur = BLI_rctf_size_x(&v2d->cur) > 0.0f;
   const float cur_xmin = v2d->cur.xmin;
   const float cur_xmax = v2d->cur.xmax;
@@ -1046,8 +1046,8 @@ void better_timeline_view_sync(ARegion *region,
 }
 
 rcti better_timeline_track_object_slot_rect(const ARegion *region,
-                                             const SpaceBetterTimeline *sbetter_timeline,
-                                             const int row_index)
+                                            const SpaceBetterTimeline *sbetter_timeline,
+                                            const int row_index)
 {
   const int accent_w = int(BETTER_TIMELINE_TRACK_ACCENT_WIDTH * UI_SCALE_FAC);
   const int icon_area = int(BETTER_TIMELINE_TRACK_BUTTON_SIZE * UI_SCALE_FAC);
@@ -1059,7 +1059,8 @@ rcti better_timeline_track_object_slot_rect(const ARegion *region,
   const float y_max = better_timeline_row_ymax(region, sbetter_timeline, row_index);
   const int pad_y = int(5.0f * UI_SCALE_FAC);
   /* Indent child tracks the same way accent bar and icons are indented in draw. */
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   const int indent = (row_index >= 0 && row_index < int(rows.size())) ? rows[row_index].indent : 0;
   const int indent_x = int(float(indent) * 16.0f * UI_SCALE_FAC);
   /* Start after indent + accent + type icon; end before the mute button. */
@@ -1153,7 +1154,8 @@ rcti better_timeline_group_collapse_toggle_rect(const ARegion *region,
   const int accent_w = int(BETTER_TIMELINE_TRACK_ACCENT_WIDTH * UI_SCALE_FAC);
 
   /* Apply row indent so the hit zone matches the visually indented arrow. */
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   const int indent = (row_index >= 0 && row_index < int(rows.size())) ? rows[row_index].indent : 0;
   const int indent_x = int(float(indent) * 16.0f * UI_SCALE_FAC);
 
@@ -1166,16 +1168,17 @@ rcti better_timeline_group_collapse_toggle_rect(const ARegion *region,
 }
 
 bool better_timeline_is_on_group_collapse_toggle(const ARegion *region,
-                                                  const SpaceBetterTimeline *sbetter_timeline,
-                                                  const int region_x,
-                                                  const int region_y,
-                                                  int *r_group_row_index)
+                                                 const SpaceBetterTimeline *sbetter_timeline,
+                                                 const int region_x,
+                                                 const int region_y,
+                                                 int *r_group_row_index)
 {
   if (r_group_row_index != nullptr) {
     *r_group_row_index = -1;
   }
   const int row_count = better_timeline_visible_row_count(sbetter_timeline);
-  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(sbetter_timeline);
+  const Vector<BetterTimelineVisibleRow> rows = better_timeline_visible_rows_build(
+      sbetter_timeline);
   for (int i = 0; i < row_count; i++) {
     if (!better_timeline_row_is_visible(region, sbetter_timeline, i)) {
       continue;

@@ -249,8 +249,7 @@ void better_timeline_view2d_update_old_window(ARegion *region,
 void better_timeline_view_sync(ARegion *region,
                                const Scene *scene,
                                const SpaceBetterTimeline *sbetter_timeline);
-rcti better_timeline_body_rect(const ARegion *region,
-                               const SpaceBetterTimeline *sbetter_timeline);
+rcti better_timeline_body_rect(const ARegion *region, const SpaceBetterTimeline *sbetter_timeline);
 rcti better_timeline_scrub_rect(const ARegion *region,
                                 const SpaceBetterTimeline *sbetter_timeline);
 rcti better_timeline_add_button_rect(const ARegion *region,
@@ -296,9 +295,7 @@ int better_timeline_track_from_region_y(const ARegion *region,
                                         int region_y);
 /** Group-aware insertion target from mouse Y. Handles in-group insertion automatically. */
 BetterTimelineInsertionTarget better_timeline_insertion_target_from_region_y(
-    const ARegion *region,
-    const SpaceBetterTimeline *sbetter_timeline,
-    int region_y);
+    const ARegion *region, const SpaceBetterTimeline *sbetter_timeline, int region_y);
 /** Pixel Y for the insertion line corresponding to a given target. */
 float better_timeline_insertion_target_y(const ARegion *region,
                                          const SpaceBetterTimeline *sbetter_timeline,
@@ -307,35 +304,38 @@ float better_timeline_insertion_target_y(const ARegion *region,
 bool better_timeline_reorder_selected_tracks_would_change_target(
     const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineInsertionTarget &target);
 /** Reorders/moves selected tracks to the insertion target. Works across group boundaries. */
-bool better_timeline_reorder_selected_tracks_to_target(SpaceBetterTimeline *sbetter_timeline,
-                                                        const BetterTimelineInsertionTarget &target);
-/** Move all selected top-level tracks into `group` as children. Returns true if anything changed. */
+bool better_timeline_reorder_selected_tracks_to_target(
+    SpaceBetterTimeline *sbetter_timeline, const BetterTimelineInsertionTarget &target);
+/** Move all effectively selected visible tracks into `group` as children. Returns true if changed.
+ */
 bool better_timeline_move_selected_tracks_into_group(SpaceBetterTimeline *sbetter_timeline,
-                                                      BetterTimelineTrack *group);
-bool better_timeline_track_reorder_autoscroll_apply(
-    const ARegion *region, SpaceBetterTimeline *sbetter_timeline, int region_y);
-void better_timeline_track_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
-                                                    const ARegion *region,
-                                                    const BetterTimelineTrack *dragged_track,
-                                                    float insertion_y,
-                                                    const BetterTimelineTrack *drop_group_target = nullptr);
+                                                     BetterTimelineTrack *group);
+bool better_timeline_track_reorder_autoscroll_apply(const ARegion *region,
+                                                    SpaceBetterTimeline *sbetter_timeline,
+                                                    int region_y);
+void better_timeline_track_drag_visual_state_update(
+    const SpaceBetterTimeline *sbetter_timeline,
+    const ARegion *region,
+    const BetterTimelineTrack *dragged_track,
+    float insertion_y,
+    const BetterTimelineTrack *drop_group_target = nullptr);
 void better_timeline_track_drag_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
-void better_timeline_clip_drag_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
-                                                   const ARegion *region,
-                                                   const BetterTimelineTrack *source_track,
-                                                   const BetterTimelineTrack *target_track,
-                                                   const BetterTimelineClip *dragged_clip,
-                                                   Span<const BetterTimelineClip *> moved_clips,
-                                                   Span<const BetterTimelineTrack *> moved_clip_tracks,
-                                                   float preview_start_frame,
-                                                   float preview_end_frame,
-                                                   bool drop_valid);
+void better_timeline_clip_drag_visual_state_update(
+    const SpaceBetterTimeline *sbetter_timeline,
+    const ARegion *region,
+    const BetterTimelineTrack *source_track,
+    const BetterTimelineTrack *target_track,
+    const BetterTimelineClip *dragged_clip,
+    Span<const BetterTimelineClip *> moved_clips,
+    Span<const BetterTimelineTrack *> moved_clip_tracks,
+    float preview_start_frame,
+    float preview_end_frame,
+    bool drop_valid);
 void better_timeline_clip_drag_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
 bool better_timeline_clip_drag_visual_state_is_dragged_clip(
     const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineClip *clip);
-void better_timeline_clip_box_select_visual_state_update(const SpaceBetterTimeline *sbetter_timeline,
-                                                         const ARegion *region,
-                                                         const rcti &rect);
+void better_timeline_clip_box_select_visual_state_update(
+    const SpaceBetterTimeline *sbetter_timeline, const ARegion *region, const rcti &rect);
 void better_timeline_clip_box_select_visual_state_clear(SpaceBetterTimeline *sbetter_timeline);
 eBetterTimelineClipResizeEdge better_timeline_clip_resize_edge_from_region_position(
     const ARegion *region,
@@ -383,7 +383,8 @@ const BetterTimelineTrack *better_timeline_track_at_index(
 int better_timeline_track_count(const SpaceBetterTimeline *sbetter_timeline);
 int better_timeline_track_index_from_ptr(const SpaceBetterTimeline *sbetter_timeline,
                                          const BetterTimelineTrack *target_track);
-BetterTimelineTrack *better_timeline_track_create(const char *track_type_idname, int track_name_index);
+BetterTimelineTrack *better_timeline_track_create(const char *track_type_idname,
+                                                  int track_name_index);
 BetterTimelineTrack *better_timeline_track_duplicate(const BetterTimelineTrack *track_src);
 void better_timeline_track_free(BetterTimelineTrack *track);
 void better_timeline_tracks_free(ListBase *tracks);
@@ -405,13 +406,12 @@ bool better_timeline_clip_range_overlaps(float start_frame_a,
                                          float end_frame_a,
                                          float start_frame_b,
                                          float end_frame_b);
-bool better_timeline_track_can_place_clip(
-    const BetterTimelineTrack *track,
-    StringRef clip_type_idname,
-    float start_frame,
-    float end_frame,
-    const BetterTimelineClip *ignore_clip = nullptr,
-    Span<const BetterTimelineClip *> ignored_clips = {});
+bool better_timeline_track_can_place_clip(const BetterTimelineTrack *track,
+                                          StringRef clip_type_idname,
+                                          float start_frame,
+                                          float end_frame,
+                                          const BetterTimelineClip *ignore_clip = nullptr,
+                                          Span<const BetterTimelineClip *> ignored_clips = {});
 const BetterTimelineClip *better_timeline_clip_covering_frame(const BetterTimelineTrack *track,
                                                               float frame,
                                                               StringRef clip_type_idname);
@@ -461,11 +461,13 @@ bool better_timeline_track_is_group(const BetterTimelineTrack *track);
 bool better_timeline_track_is_collapsed(const BetterTimelineTrack *track);
 /** Returns true if `track` is anywhere inside `ancestor_candidate`'s group_tracks hierarchy. */
 bool better_timeline_track_is_descendant_of(const BetterTimelineTrack *track,
-                                             const BetterTimelineTrack *ancestor_candidate);
+                                            const BetterTimelineTrack *ancestor_candidate);
+bool better_timeline_track_has_selected_ancestor(const SpaceBetterTimeline *sbetter_timeline,
+                                                 const BetterTimelineTrack *track);
 /** Returns true if moving any selected track into `target_group` would create a cycle
  *  (i.e., target_group is a descendant of a selected track, or is selected itself). */
 bool better_timeline_would_create_group_cycle(const SpaceBetterTimeline *sbetter_timeline,
-                                               const BetterTimelineTrack *target_group);
+                                              const BetterTimelineTrack *target_group);
 
 /** Build the ordered flat list of visible rows from the track hierarchy.
  *  Collapsed groups suppress their children. Recursively handles nested groups. */
@@ -481,23 +483,21 @@ Vector<BetterTimelineVisibleRow> better_timeline_all_tracks_build(
 int better_timeline_visible_row_count(const SpaceBetterTimeline *sbetter_timeline);
 
 /** Track at visible row index, or nullptr if out of range. */
-BetterTimelineTrack *better_timeline_visible_row_track_get(
-    SpaceBetterTimeline *sbetter_timeline, int row_index);
+BetterTimelineTrack *better_timeline_visible_row_track_get(SpaceBetterTimeline *sbetter_timeline,
+                                                           int row_index);
 const BetterTimelineTrack *better_timeline_visible_row_track_get(
     const SpaceBetterTimeline *sbetter_timeline, int row_index);
 
 /** Visible row index for a given track pointer (searches all hierarchy levels).
  *  Returns -1 if the track is not currently visible (inside collapsed group, or not found). */
-int better_timeline_visible_row_index_from_track_ptr(
-    const SpaceBetterTimeline *sbetter_timeline, const BetterTimelineTrack *track);
+int better_timeline_visible_row_index_from_track_ptr(const SpaceBetterTimeline *sbetter_timeline,
+                                                     const BetterTimelineTrack *track);
 
 /** Visible row index of the first selected track, or -1. */
-int better_timeline_first_selected_visible_row_index(
-    const SpaceBetterTimeline *sbetter_timeline);
+int better_timeline_first_selected_visible_row_index(const SpaceBetterTimeline *sbetter_timeline);
 
 /** Select only the track at the given visible row index; deselect everything else. */
-void better_timeline_select_only_visible_row(SpaceBetterTimeline *sbetter_timeline,
-                                              int row_index);
+void better_timeline_select_only_visible_row(SpaceBetterTimeline *sbetter_timeline, int row_index);
 
 /** Collapse toggle rect (the triangle arrow) for a group row in the track list pane. */
 rcti better_timeline_group_collapse_toggle_rect(const ARegion *region,
@@ -507,13 +507,13 @@ rcti better_timeline_group_collapse_toggle_rect(const ARegion *region,
 /** Returns true if the click at (region_x, region_y) is on a group collapse toggle.
  *  Sets *r_group_row_index to the visible row of the group (if true). */
 bool better_timeline_is_on_group_collapse_toggle(const ARegion *region,
-                                                  const SpaceBetterTimeline *sbetter_timeline,
-                                                  int region_x,
-                                                  int region_y,
-                                                  int *r_group_row_index);
+                                                 const SpaceBetterTimeline *sbetter_timeline,
+                                                 int region_x,
+                                                 int region_y,
+                                                 int *r_group_row_index);
 rcti better_timeline_track_object_slot_rect(const ARegion *region,
-                                             const SpaceBetterTimeline *sbetter_timeline,
-                                             int row_index);
+                                            const SpaceBetterTimeline *sbetter_timeline,
+                                            int row_index);
 rcti better_timeline_track_object_slot_picker_rect(const ARegion *region,
                                                    const SpaceBetterTimeline *sbetter_timeline,
                                                    int row_index);

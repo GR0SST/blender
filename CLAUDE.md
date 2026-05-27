@@ -8,7 +8,7 @@ This repository has one purpose: developing the **Better Timeline** editor for B
 
 Better Timeline is a clip-oriented, track-based timeline editor built as a first-class Blender space (C++ + Python, compiled in — not an add-on). It is heavily inspired by **Unity's Timeline** and aims to match its look, feel, and workflow as closely as makes sense within Blender's architecture. Unity's Timeline is the primary design reference for layout decisions, UX patterns, and feature priorities.
 
-The fork base is `blender-v5.1-release`. Everything outside the Better Timeline subsystem is unchanged and should not be modified.
+The fork base is `blender-v5.1-release`. Do not modify unrelated Blender subsystems, but Better Timeline integration touchpoints in DNA/RNA, editor registration, animation scrubbing, undo registration, and startup UI loading are part of this subsystem.
 
 `AGENTS.md` in the root contains detailed architecture notes, design constraints, and rules that must be treated as foundational. Read it before making architectural decisions.
 
@@ -31,7 +31,7 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 **C++ implementation** (`source/blender/editors/space_better_timeline/`):
 - `space_better_timeline.cc` — editor/space registration, region setup, lifecycle hooks, keymap wiring
 - `better_timeline_data.cc` — DNA persistence, track/clip alloc/free/duplicate, blend file I/O
-- `better_timeline_ops_tracks.cc` — track operators (add, delete, select, rename)
+- `better_timeline_ops_tracks.cc` — track operators (add, delete, select, duplicate/copy/paste, group collapse/reorder, mute/lock, object slots)
 - `better_timeline_ops_clips.cc` — clip operators (add, delete, move, copy/paste, duplicate)
 - `better_timeline_ops_view.cc` — view operators (zoom, pan, scroll, frame-all, splitter resize)
 - `better_timeline_draw.cc` — all rendering: track list, ruler, grid, playhead, clips, overlays
@@ -61,7 +61,7 @@ The build system is CMake + Ninja. First-time CMake configuration must be done m
 - Tracks and clips are **typed**: `track_type` and `clip_type` are persistent string idnames (max 64 chars) resolved against the runtime registry.
 - Type-specific data lives in `BetterTimelineTrack::properties` / `BetterTimelineClip::properties` (`IDProperty` blobs), not hardcoded struct fields.
 - `BetterTimelineTrack::object` is a weak scene-object binding for object-slot tracks. Treat it like editor UI state, not an owning/refcounted object link.
-- Built-in types: `test_track`→`test_clip`, `animation_track`→`animation_clip`, `spline_track`→`spline_clip`.
+- Built-in types: `BETTER_TIMELINE_TT_GROUP`, `BETTER_TIMELINE_TT_TEST`→`BETTER_TIMELINE_CT_TEST`, `BETTER_TIMELINE_TT_ANIMATION`→`BETTER_TIMELINE_CT_ANIMATION`, and `BETTER_TIMELINE_TT_SPLINE`→`BETTER_TIMELINE_CT_SPLINE`.
 
 ### Compatibility & Registry
 - All compatibility checks (create, paste, duplicate, move, drag/drop) go through the centralized API in `ED_better_timeline.hh`. Do not scatter `if (track_type == "...")` logic across operator code.

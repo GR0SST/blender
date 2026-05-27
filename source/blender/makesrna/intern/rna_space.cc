@@ -1305,55 +1305,107 @@ static void rna_RegionView3D_quadview_clip_update(Main * /*main*/,
   }
 }
 
-static BetterTimelineTrack *rna_SpaceBetterTimeline_active_track_lookup(SpaceBetterTimeline *space)
+static bool rna_BetterTimelineTrack_is_group(const BetterTimelineTrack *track)
 {
-  if (space == nullptr) {
-    return nullptr;
+  if (track == nullptr || track->track_type[0] == '\0') {
+    return false;
   }
+  const ed::better_timeline::BetterTimelineTrackType *track_type =
+      ed::better_timeline::track_type_find_from_idname(track->track_type);
+  return track_type != nullptr && track_type->is_group;
+}
 
-  /* Walk top-level tracks and one level of group children to find the first selected track.
-   * selected_track_index is a visible-row index and cannot be used with BLI_findlink directly. */
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(space->tracks.first);
+static bool rna_BetterTimelineTrack_is_collapsed(const BetterTimelineTrack *track)
+{
+  return track != nullptr && (track->flag & BETTER_TIMELINE_TRACK_COLLAPSED) != 0;
+}
+
+static BetterTimelineTrack *rna_BetterTimeline_visible_track_at_index_recursive(
+    const ListBase *tracks, const int target_index, int &current_index)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (current_index == target_index) {
+      return track;
+    }
+    current_index++;
+
+    if (rna_BetterTimelineTrack_is_group(track) && !rna_BetterTimelineTrack_is_collapsed(track)) {
+      if (BetterTimelineTrack *child = rna_BetterTimeline_visible_track_at_index_recursive(
+              &track->group_tracks, target_index, current_index))
+      {
+        return child;
+      }
+    }
+  }
+  return nullptr;
+}
+
+static BetterTimelineTrack *rna_BetterTimeline_first_selected_visible_track_recursive(
+    const ListBase *tracks)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
        track != nullptr;
        track = track->next)
   {
     if (track->selected != 0) {
       return track;
     }
-    for (BetterTimelineTrack *child = static_cast<BetterTimelineTrack *>(
-             track->group_tracks.first);
-         child != nullptr;
-         child = child->next)
-    {
-      if (child->selected != 0) {
+    if (rna_BetterTimelineTrack_is_group(track) && !rna_BetterTimelineTrack_is_collapsed(track)) {
+      if (BetterTimelineTrack *child = rna_BetterTimeline_first_selected_visible_track_recursive(
+              &track->group_tracks))
+      {
         return child;
       }
     }
   }
-
   return nullptr;
 }
 
-static BetterTimelineClip *rna_SpaceBetterTimeline_active_clip_lookup(SpaceBetterTimeline *space,
-                                                                      BetterTimelineTrack **r_track)
+static BetterTimelineTrack *rna_SpaceBetterTimeline_active_track_lookup(SpaceBetterTimeline *space)
 {
-  if (r_track != nullptr) {
-    *r_track = nullptr;
-  }
   if (space == nullptr) {
     return nullptr;
   }
 
-  int global_index = 0;
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(space->tracks.first);
+  if (space->selected_track_index >= 0) {
+    int current_index = 0;
+    BetterTimelineTrack *track = rna_BetterTimeline_visible_track_at_index_recursive(
+        &space->tracks, space->selected_track_index, current_index);
+    if (track != nullptr && track->selected != 0) {
+      return track;
+    }
+  }
+
+  return rna_BetterTimeline_first_selected_visible_track_recursive(&space->tracks);
+}
+
+static BetterTimelineClip *rna_BetterTimeline_clip_at_global_index_recursive(
+    const ListBase *tracks,
+    const int target_index,
+    int &current_index,
+    BetterTimelineTrack **r_track)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
        track != nullptr;
        track = track->next)
   {
+    if (rna_BetterTimelineTrack_is_group(track)) {
+      if (BetterTimelineClip *clip = rna_BetterTimeline_clip_at_global_index_recursive(
+              &track->group_tracks, target_index, current_index, r_track))
+      {
+        return clip;
+      }
+      continue;
+    }
+
     for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
          clip != nullptr;
-         clip = clip->next, global_index++)
+         clip = clip->next, current_index++)
     {
-      if (global_index == space->selected_clip_index && clip->selected != 0) {
+      if (current_index == target_index && clip->selected != 0) {
         if (r_track != nullptr) {
           *r_track = track;
         }
@@ -1361,11 +1413,25 @@ static BetterTimelineClip *rna_SpaceBetterTimeline_active_clip_lookup(SpaceBette
       }
     }
   }
+  return nullptr;
+}
 
-  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(space->tracks.first);
+static BetterTimelineClip *rna_BetterTimeline_first_selected_clip_recursive(
+    const ListBase *tracks, BetterTimelineTrack **r_track)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
        track != nullptr;
        track = track->next)
   {
+    if (rna_BetterTimelineTrack_is_group(track)) {
+      if (BetterTimelineClip *clip = rna_BetterTimeline_first_selected_clip_recursive(
+              &track->group_tracks, r_track))
+      {
+        return clip;
+      }
+      continue;
+    }
+
     for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
          clip != nullptr;
          clip = clip->next)
@@ -1378,7 +1444,60 @@ static BetterTimelineClip *rna_SpaceBetterTimeline_active_clip_lookup(SpaceBette
       }
     }
   }
+  return nullptr;
+}
 
+static BetterTimelineClip *rna_SpaceBetterTimeline_active_clip_lookup(
+    SpaceBetterTimeline *space, BetterTimelineTrack **r_track)
+{
+  if (r_track != nullptr) {
+    *r_track = nullptr;
+  }
+  if (space == nullptr) {
+    return nullptr;
+  }
+
+  int global_index = 0;
+  if (space->selected_clip_index >= 0) {
+    if (BetterTimelineClip *clip = rna_BetterTimeline_clip_at_global_index_recursive(
+            &space->tracks, space->selected_clip_index, global_index, r_track))
+    {
+      return clip;
+    }
+  }
+
+  return rna_BetterTimeline_first_selected_clip_recursive(&space->tracks, r_track);
+}
+
+static BetterTimelineClip *rna_BetterTimeline_find_clip_recursive(const ListBase *tracks,
+                                                                  BetterTimelineClip *target_clip,
+                                                                  BetterTimelineTrack **r_track)
+{
+  for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
+       track != nullptr;
+       track = track->next)
+  {
+    if (rna_BetterTimelineTrack_is_group(track)) {
+      if (BetterTimelineClip *clip = rna_BetterTimeline_find_clip_recursive(
+              &track->group_tracks, target_clip, r_track))
+      {
+        return clip;
+      }
+      continue;
+    }
+
+    for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
+         clip != nullptr;
+         clip = clip->next)
+    {
+      if (clip == target_clip) {
+        if (r_track != nullptr) {
+          *r_track = track;
+        }
+        return clip;
+      }
+    }
+  }
   return nullptr;
 }
 
@@ -1400,7 +1519,8 @@ static SpaceBetterTimeline *rna_BetterTimeline_owner_space_from_clip(PointerRNA 
 
   auto *target_clip = static_cast<BetterTimelineClip *>(ptr->data);
   for (ScrArea &area : screen->areabase) {
-    for (SpaceLink *space_link = static_cast<SpaceLink *>(area.spacedata.first); space_link != nullptr;
+    for (SpaceLink *space_link = static_cast<SpaceLink *>(area.spacedata.first);
+         space_link != nullptr;
          space_link = space_link->next)
     {
       if (space_link->spacetype != SPACE_BETTER_TIMELINE) {
@@ -1408,24 +1528,13 @@ static SpaceBetterTimeline *rna_BetterTimeline_owner_space_from_clip(PointerRNA 
       }
 
       auto *space = reinterpret_cast<SpaceBetterTimeline *>(space_link);
-      for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(space->tracks.first);
-           track != nullptr;
-           track = track->next)
+      if (BetterTimelineClip *clip = rna_BetterTimeline_find_clip_recursive(
+              &space->tracks, target_clip, r_track))
       {
-        for (BetterTimelineClip *clip = static_cast<BetterTimelineClip *>(track->clips.first);
-             clip != nullptr;
-             clip = clip->next)
-        {
-          if (clip == target_clip) {
-            if (r_track != nullptr) {
-              *r_track = track;
-            }
-            if (r_clip != nullptr) {
-              *r_clip = clip;
-            }
-            return space;
-          }
+        if (r_clip != nullptr) {
+          *r_clip = clip;
         }
+        return space;
       }
     }
   }
@@ -1433,7 +1542,9 @@ static SpaceBetterTimeline *rna_BetterTimeline_owner_space_from_clip(PointerRNA 
   return nullptr;
 }
 
-static void rna_SpaceBetterTimeline_state_update(Main *bmain, Scene * /*scene*/, PointerRNA * /*ptr*/)
+static void rna_SpaceBetterTimeline_state_update(Main *bmain,
+                                                 Scene * /*scene*/,
+                                                 PointerRNA * /*ptr*/)
 {
   if (bmain != nullptr) {
     bmain->is_memfile_undo_flush_needed = true;
@@ -1476,9 +1587,11 @@ static void rna_BetterTimelineTrack_type_label_get(PointerRNA *ptr, char *value)
 {
   const auto *track = static_cast<const BetterTimelineTrack *>(ptr->data);
   const ed::better_timeline::BetterTimelineTrackType *track_type =
-      (track != nullptr) ? ed::better_timeline::track_type_find_from_idname(track->track_type) : nullptr;
-  const char *label = (track_type != nullptr && track_type->label[0] != '\0') ? track_type->label :
-                                                                              ((track != nullptr) ? track->track_type : "");
+      (track != nullptr) ? ed::better_timeline::track_type_find_from_idname(track->track_type) :
+                           nullptr;
+  const char *label = (track_type != nullptr && track_type->label[0] != '\0') ?
+                          track_type->label :
+                          ((track != nullptr) ? track->track_type : "");
   BLI_strncpy(value, label, ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX);
 }
 
@@ -1493,9 +1606,11 @@ static void rna_BetterTimelineClip_type_label_get(PointerRNA *ptr, char *value)
 {
   const auto *clip = static_cast<const BetterTimelineClip *>(ptr->data);
   const ed::better_timeline::BetterTimelineClipType *clip_type =
-      (clip != nullptr) ? ed::better_timeline::clip_type_find_from_idname(clip->clip_type) : nullptr;
-  const char *label = (clip_type != nullptr && clip_type->label[0] != '\0') ? clip_type->label :
-                                                                             ((clip != nullptr) ? clip->clip_type : "");
+      (clip != nullptr) ? ed::better_timeline::clip_type_find_from_idname(clip->clip_type) :
+                          nullptr;
+  const char *label = (clip_type != nullptr && clip_type->label[0] != '\0') ?
+                          clip_type->label :
+                          ((clip != nullptr) ? clip->clip_type : "");
   BLI_strncpy(value, label, ed::better_timeline::BETTER_TIMELINE_TYPE_IDNAME_MAX);
 }
 
@@ -1512,7 +1627,9 @@ static float rna_BetterTimelineClip_duration_get(PointerRNA *ptr)
   return (clip != nullptr) ? (clip->end_frame - clip->start_frame) : 0.0f;
 }
 
-static bool rna_BetterTimelineClip_apply_range(PointerRNA *ptr, const float start_frame, const float end_frame)
+static bool rna_BetterTimelineClip_apply_range(PointerRNA *ptr,
+                                               const float start_frame,
+                                               const float end_frame)
 {
   BetterTimelineTrack *track = nullptr;
   BetterTimelineClip *clip = nullptr;
@@ -1554,7 +1671,8 @@ static void rna_BetterTimelineClip_duration_set(PointerRNA *ptr, float value)
 {
   const auto *clip = static_cast<const BetterTimelineClip *>(ptr->data);
   if (clip != nullptr) {
-    rna_BetterTimelineClip_apply_range(ptr, clip->start_frame, clip->start_frame + std::max(1.0f, value));
+    rna_BetterTimelineClip_apply_range(
+        ptr, clip->start_frame, clip->start_frame + std::max(1.0f, value));
   }
 }
 
@@ -2728,8 +2846,8 @@ static void rna_ConsoleLine_body_set(PointerRNA *ptr, const char *value)
   ConsoleLine *ci = static_cast<ConsoleLine *>(ptr->data);
   size_t len = strlen(value);
 
-  if ((len >= size_t(ci->len_alloc)) || (len * 2 < size_t(ci->len_alloc)))
-  { /* allocate a new string */
+  if ((len >= size_t(ci->len_alloc)) ||
+      (len * 2 < size_t(ci->len_alloc))) { /* allocate a new string */
     MEM_delete(ci->line);
     ci->line = MEM_new_array_uninitialized<char>(len + 1, "rna_consoleline");
     ci->len_alloc = int(len + 1);
@@ -9625,10 +9743,8 @@ static void rna_def_space_better_timeline(BlenderRNA *brna)
   RNA_def_property_update(prop, NC_SCREEN | NA_EDITED, "rna_SpaceBetterTimeline_state_update");
 
   prop = RNA_def_property(srna, "duration", PROP_FLOAT, PROP_TIME);
-  RNA_def_property_float_funcs(prop,
-                               "rna_BetterTimelineClip_duration_get",
-                               "rna_BetterTimelineClip_duration_set",
-                               nullptr);
+  RNA_def_property_float_funcs(
+      prop, "rna_BetterTimelineClip_duration_get", "rna_BetterTimelineClip_duration_set", nullptr);
   RNA_def_property_ui_text(prop, "Duration", "Clip duration in frames");
   RNA_def_property_update(prop, NC_SCREEN | NA_EDITED, "rna_SpaceBetterTimeline_state_update");
 
@@ -9640,13 +9756,15 @@ static void rna_def_space_better_timeline(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "active_track", PROP_POINTER, PROP_NONE);
   RNA_def_property_struct_type(prop, "BetterTimelineTrack");
-  RNA_def_property_pointer_funcs(prop, "rna_SpaceBetterTimeline_active_track_get", nullptr, nullptr, nullptr);
+  RNA_def_property_pointer_funcs(
+      prop, "rna_SpaceBetterTimeline_active_track_get", nullptr, nullptr, nullptr);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop, "Active Track", "Selected Better Timeline track");
 
   prop = RNA_def_property(srna, "active_clip", PROP_POINTER, PROP_NONE);
   RNA_def_property_struct_type(prop, "BetterTimelineClip");
-  RNA_def_property_pointer_funcs(prop, "rna_SpaceBetterTimeline_active_clip_get", nullptr, nullptr, nullptr);
+  RNA_def_property_pointer_funcs(
+      prop, "rna_SpaceBetterTimeline_active_clip_get", nullptr, nullptr, nullptr);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop, "Active Clip", "Selected Better Timeline clip");
 }

@@ -28,46 +28,45 @@ These `IDProperty` roots are the extension points for type-specific data.
 
 ## ID Pointer Fields
 
-When a Better Timeline struct stores a live Blender ID pointer (e.g. `Object *`), normal
-`blend_read_data` is not sufficient. ID pointers require the **liblink fixup phase** because the
-referenced IDs are not yet available when `blend_read_data` runs.
+When a Better Timeline struct stores a live Blender ID pointer (e.g. `Object *`), plain
+struct-list read/write is not enough. The pointer must be part of Blender's normal ID walking and
+remap machinery so save/load, linked data, deletion, and remapping all see it.
 
 For Better Timeline object-slot bindings there are three separate requirements:
 
-1. blend read fixup for save/load
+1. recursive space `foreach_id` walking so Blender's normal read/lib-link pass sees the pointer
 2. space `foreach_id` / `id_remap` wiring so object delete/remap nulls stale pointers
 3. RNA pointer ownership configured as weak, not refcounted, so the Properties Pane matches the
    tracklist operator path
 
 The correct pattern:
 
-1. Register a `blend_read_after_liblink` callback on the `SpaceType` in `space_better_timeline.cc`:
+1. Register the recursive space-level ID callbacks on the `SpaceType` in
+   `space_better_timeline.cc`:
    ```cpp
-   st->blend_read_after_liblink = better_timeline_space_blend_read_after_liblink;
+   st->foreach_id = better_timeline_space_foreach_id;
+   st->id_remap = better_timeline_space_id_remap;
    ```
 
-2. In `better_timeline_data.cc`, iterate tracks and call `BLO_read_get_new_id_address`:
+2. In `better_timeline_data.cc`, recursively walk top-level tracks and `group_tracks`:
    ```cpp
-   void better_timeline_space_blend_read_after_liblink(BlendLibReader *reader,
-                                                       ID *parent_id,
-                                                       SpaceLink *sl)
+   static void better_timeline_tracks_foreach_id_recursive(const ListBase *tracks,
+                                                           LibraryForeachIDData *data)
    {
-     auto *s = reinterpret_cast<SpaceBetterTimeline *>(sl);
-     LISTBASE_FOREACH (BetterTimelineTrack *, track, &s->tracks) {
-       track->object = reinterpret_cast<Object *>(BLO_read_get_new_id_address(
-           reader, parent_id, false, reinterpret_cast<ID *>(track->object)));
+     for (BetterTimelineTrack *track = static_cast<BetterTimelineTrack *>(tracks->first);
+          track != nullptr;
+          track = track->next)
+     {
+       BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, track->object, IDWALK_CB_DIRECT_WEAK_LINK);
+       better_timeline_tracks_foreach_id_recursive(&track->group_tracks, data);
      }
    }
    ```
 
-`BLO_read_get_new_id_address` takes four arguments: `(reader, self_id, is_linked_only, id)`.
-Passing `false` for `is_linked_only` is correct for scene-local objects.
-
-The same field also needs space-level ID walking/remap in `space_better_timeline.cc` /
-`better_timeline_data.cc`:
-
-- `st->foreach_id = better_timeline_space_foreach_id;`
-- `st->id_remap = better_timeline_space_id_remap;`
+`better_timeline_space_blend_read_after_liblink()` is intentionally a no-op for object-slot
+bindings. The normal `bScreen`/space `foreach_id` path performs the address fixup. Running an
+extra `BLO_read_get_new_id_address()` pass here can feed a new in-memory ID pointer back into
+old-address resolution and clear valid bindings on file open.
 
 Use `IDWALK_CB_DIRECT_WEAK_LINK` for `track->object`. If this wiring is missing, deleting or
 remapping a bound object can leave a dangling pointer that later crashes draw/UI code.
